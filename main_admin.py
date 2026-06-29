@@ -1,6 +1,6 @@
 """
-main.py
-Entry point do Totem — inicia backend FastAPI em thread e abre a tela do cliente.
+main_admin.py
+Entry point do Painel Administrativo — inicia backend se necessário e abre o admin.
 """
 
 import sys
@@ -19,17 +19,13 @@ def _start_server():
 
 
 def _aguardar_servidor(timeout: int = 15) -> bool:
-    print("[PDV] Aguardando servidor...", end="", flush=True)
     t0 = time.time()
     while time.time() - t0 < timeout:
         try:
             httpx.get("http://127.0.0.1:8000/produtos", timeout=1)
-            print(" OK")
             return True
         except Exception:
-            print(".", end="", flush=True)
             time.sleep(0.4)
-    print(" TIMEOUT")
     return False
 
 
@@ -38,20 +34,19 @@ def main():
     criar_tabelas()
     popular_dados_iniciais()
 
-    # Inicia servidor apenas se não estiver rodando
     try:
         httpx.get("http://127.0.0.1:8000/produtos", timeout=1)
-        print("[PDV] Backend já em execução.")
+        print("[ADMIN] Backend já em execução.")
     except Exception:
-        print("[PDV] Iniciando backend...")
+        print("[ADMIN] Iniciando backend...")
         threading.Thread(target=_start_server, daemon=True).start()
         if not _aguardar_servidor():
-            print("[PDV] Erro: servidor não respondeu.")
+            print("[ADMIN] Erro: servidor não respondeu.")
             sys.exit(1)
 
-    print("[PDV] Abrindo totem...")
-    from ui.client_app import AppCliente
-    AppCliente().mainloop()
+    print("[ADMIN] Abrindo painel administrativo...")
+    from admin.admin_app import AdminApp
+    AdminApp().mainloop()
 
 
 if __name__ == "__main__":

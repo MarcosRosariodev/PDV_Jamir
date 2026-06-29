@@ -1,32 +1,36 @@
 """
 api/routes.py
-Rotas FastAPI — pedidos, produtos, estoque
+Rotas FastAPI — categorias, produtos, pedidos, relatórios
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 from pydantic import BaseModel
-from typing import List, Optional
-from datetime import datetime, date
+from datetime import datetime
+import threading
+import shutil
+import pathlib
 import sys, os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from database.db import get_db, Produto, Estoque, Pedido, ItemPedido
+from database.db import get_db, Categoria, Produto, Pedido, PedidoItem
+from services.printer import imprimir_cupom
 
 router = APIRouter()
 
 
-# ── Schemas Pydantic ────────────────────────────────────────────────────────
+# ── Schemas ──────────────────────────────────────────────────────────────────
+
+class CategoriaCreate(BaseModel):
+    nome: str
 
 class ItemSchema(BaseModel):
     produto_id: int
     quantidade: int
 
 class PedidoCreate(BaseModel):
-    itens: List[ItemSchema]
-    forma_pagto: str = "dinheiro"
-    observacao: str = ""
+    itens: list[ItemSchema]
+    forma_pagamento: str = "dinheiro"
 
 class PedidoStatusUpdate(BaseModel):
     status: str
@@ -35,60 +39,93 @@ class ProdutoCreate(BaseModel):
     nome: str
     descricao: str = ""
     preco: float
-    categoria: str = "Sorvete"
     imagem: str = ""
-
-class EstoqueUpdate(BaseModel):
-    quantidade: int
+    categoria_id: int | None = None
 
 class ProdutoUpdate(BaseModel):
-    nome: Optional[str] = None
-    descricao: Optional[str] = None
-    preco: Optional[float] = None
-    ativo: Optional[int] = None
-    quantidade_estoque: Optional[int] = None
+    nome: str | None = None
+    descricao: str | None = None
+    preco: float | None = None
+    ativo: int | None = None
+    categoria_id: int | None = None
 
 
-# ── Produtos ────────────────────────────────────────────────────────────────
+# ── Categorias ───────────────────────────────────────────────────────────────
+
+@router.get("/categorias")
+def listar_categorias(db: Session = Depends(get_db)):
+    cats = db.query(Categoria).order_by(Categoria.nome).all()
+    return [{"id": c.id, "nome": c.nome} for c in cats]
+
+
+@router.post("/categorias")
+def criar_categoria(dados: CategoriaCreate, db: Session = Depends(get_db)):
+    if db.query(Categoria).filter(Categoria.nome == dados.nome).first():
+        raise HTTPException(status_code=400, detail="Categoria já existe")
+    c = Categoria(nome=dados.nome)
+    db.add(c)
+    db.commit()
+    return {"id": c.id, "mensagem": "Categoria criada"}
+
+
+@router.delete("/categorias/{cat_id}")
+def deletar_categoria(cat_id: int, db: Session = Depends(get_db)):
+    c = db.query(Categoria).filter(Categoria.id == cat_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Categoria não encontrada")
+    if db.query(Produto).filter(Produto.categoria_id == cat_id).count() > 0:
+        raise HTTPException(status_code=400, detail="Categoria possui produtos vinculados")
+    db.delete(c)
+    db.commit()
+    return {"mensagem": "Categoria removida"}
+
+
+# ── Produtos ─────────────────────────────────────────────────────────────────
 
 @router.get("/produtos")
 def listar_produtos(db: Session = Depends(get_db)):
     produtos = db.query(Produto).filter(Produto.ativo == 1).all()
-    result = []
-    for p in produtos:
-        est = p.estoque.quantidade if p.estoque else 0
-        result.append({
-            "id": p.id, "nome": p.nome, "descricao": p.descricao,
-            "preco": p.preco, "categoria": p.categoria,
-            "imagem": p.imagem, "estoque": est
-        })
-    return result
+    return [_produto_dict(p) for p in produtos]
 
 
 @router.get("/produtos/admin")
 def listar_produtos_admin(db: Session = Depends(get_db)):
-    """Retorna todos os produtos incluindo inativos (para o admin)."""
-    produtos = db.query(Produto).all()
-    result = []
-    for p in produtos:
-        est = p.estoque.quantidade if p.estoque else 0
-        minimo = p.estoque.minimo if p.estoque else 5
-        result.append({
-            "id": p.id, "nome": p.nome, "descricao": p.descricao,
-            "preco": p.preco, "categoria": p.categoria,
-            "ativo": p.ativo, "estoque": est, "minimo": minimo
-        })
-    return result
+    produtos = db.query(Produto).order_by(Produto.id).all()
+    return [_produto_dict(p, admin=True) for p in produtos]
 
 
 @router.post("/produtos")
 def criar_produto(dados: ProdutoCreate, db: Session = Depends(get_db)):
     p = Produto(**dados.model_dump())
     db.add(p)
-    db.flush()
-    db.add(Estoque(produto_id=p.id, quantidade=0))
     db.commit()
     return {"id": p.id, "mensagem": "Produto criado"}
+
+
+@router.post("/produtos/{produto_id}/imagem")
+async def upload_imagem_produto(
+    produto_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    images_dir = pathlib.Path(__file__).parent.parent / "images"
+    images_dir.mkdir(exist_ok=True)
+
+    ext = pathlib.Path(file.filename or "img.jpg").suffix.lower()
+    if ext not in {".jpg", ".jpeg", ".png", ".webp"}:
+        ext = ".jpg"
+    filename = f"produto_{produto_id}{ext}"
+    dest = images_dir / filename
+
+    with dest.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    p = db.query(Produto).filter(Produto.id == produto_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+    p.imagem = filename
+    db.commit()
+    return {"imagem": filename}
 
 
 @router.put("/produtos/{produto_id}")
@@ -96,18 +133,28 @@ def atualizar_produto(produto_id: int, dados: ProdutoUpdate, db: Session = Depen
     p = db.query(Produto).filter(Produto.id == produto_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
-    if dados.nome is not None:      p.nome = dados.nome
-    if dados.descricao is not None: p.descricao = dados.descricao
-    if dados.preco is not None:     p.preco = dados.preco
-    if dados.ativo is not None:     p.ativo = dados.ativo
-    if dados.quantidade_estoque is not None and p.estoque:
-        p.estoque.quantidade = dados.quantidade_estoque
-        p.estoque.atualizado = datetime.now()
+    for campo, valor in dados.model_dump(exclude_none=True).items():
+        setattr(p, campo, valor)
     db.commit()
     return {"mensagem": "Produto atualizado"}
 
 
-# ── Pedidos ─────────────────────────────────────────────────────────────────
+def _produto_dict(p: Produto, admin: bool = False) -> dict:
+    d = {
+        "id": p.id,
+        "nome": p.nome,
+        "descricao": p.descricao,
+        "preco": p.preco,
+        "imagem": p.imagem,
+        "categoria": p.categoria.nome if p.categoria else "",
+        "categoria_id": p.categoria_id,
+    }
+    if admin:
+        d["ativo"] = p.ativo
+    return d
+
+
+# ── Pedidos ──────────────────────────────────────────────────────────────────
 
 @router.post("/pedidos")
 def criar_pedido(dados: PedidoCreate, db: Session = Depends(get_db)):
@@ -115,47 +162,59 @@ def criar_pedido(dados: PedidoCreate, db: Session = Depends(get_db)):
     itens_validados = []
 
     for item in dados.itens:
-        produto = db.query(Produto).filter(Produto.id == item.produto_id).first()
+        produto = db.query(Produto).filter(
+            Produto.id == item.produto_id, Produto.ativo == 1
+        ).first()
         if not produto:
-            raise HTTPException(status_code=404, detail=f"Produto {item.produto_id} não encontrado")
+            raise HTTPException(status_code=404,
+                                detail=f"Produto {item.produto_id} não encontrado")
+        total += produto.preco * item.quantidade
+        itens_validados.append((produto, item.quantidade, produto.preco))
 
-        estoque = db.query(Estoque).filter(Estoque.produto_id == item.produto_id).first()
-        if not estoque or estoque.quantidade < item.quantidade:
-            raise HTTPException(status_code=400, detail=f"Estoque insuficiente: {produto.nome}")
-
-        subtotal = produto.preco * item.quantidade
-        total += subtotal
-        itens_validados.append((produto, estoque, item.quantidade, produto.preco))
-
-    pedido = Pedido(total=total, forma_pagto=dados.forma_pagto, observacao=dados.observacao)
+    pedido = Pedido(
+        valor_total=round(total, 2),
+        forma_pagamento=dados.forma_pagamento,
+    )
     db.add(pedido)
     db.flush()
+    pedido.numero = 1000 + pedido.id
 
-    for produto, estoque, qtd, preco in itens_validados:
-        db.add(ItemPedido(pedido_id=pedido.id, produto_id=produto.id,
-                          quantidade=qtd, preco_unit=preco))
-        estoque.quantidade -= qtd
+    for produto, qtd, preco in itens_validados:
+        db.add(PedidoItem(
+            pedido_id=pedido.id,
+            produto_id=produto.id,
+            quantidade=qtd,
+            valor=preco,
+        ))
 
     db.commit()
-    return {"id": pedido.id, "total": total, "mensagem": "Pedido criado com sucesso"}
+
+    pedido_dict = _pedido_dict(pedido)
+    threading.Thread(target=imprimir_cupom, args=(pedido_dict,), daemon=True).start()
+
+    return {
+        "id": pedido.id,
+        "numero": pedido.numero,
+        "valor_total": pedido.valor_total,
+        "mensagem": "Pedido criado com sucesso",
+    }
 
 
 @router.get("/pedidos")
-def listar_pedidos(status: Optional[str] = None, db: Session = Depends(get_db)):
+def listar_pedidos(status: str | None = None, db: Session = Depends(get_db)):
     q = db.query(Pedido)
     if status:
         q = q.filter(Pedido.status == status)
-    pedidos = q.order_by(Pedido.criado_em.desc()).limit(100).all()
-    result = []
-    for p in pedidos:
-        itens = [{"produto": i.produto.nome, "qtd": i.quantidade, "preco": i.preco_unit}
-                 for i in p.itens]
-        result.append({
-            "id": p.id, "status": p.status, "total": p.total,
-            "forma_pagto": p.forma_pagto, "criado_em": str(p.criado_em),
-            "observacao": p.observacao, "itens": itens
-        })
-    return result
+    pedidos = q.order_by(Pedido.data_hora.desc()).limit(200).all()
+    return [_pedido_dict(p) for p in pedidos]
+
+
+@router.get("/pedidos/{pedido_id}")
+def obter_pedido(pedido_id: int, db: Session = Depends(get_db)):
+    pedido = db.query(Pedido).filter(Pedido.id == pedido_id).first()
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+    return _pedido_dict(pedido)
 
 
 @router.put("/pedidos/{pedido_id}/status")
@@ -168,45 +227,63 @@ def atualizar_status(pedido_id: int, dados: PedidoStatusUpdate, db: Session = De
     return {"mensagem": "Status atualizado"}
 
 
-# ── Relatórios ───────────────────────────────────────────────────────────────
+@router.post("/pedidos/{pedido_id}/reimprimir")
+def reimprimir_pedido(pedido_id: int, db: Session = Depends(get_db)):
+    pedido = db.query(Pedido).filter(Pedido.id == pedido_id).first()
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+    threading.Thread(target=imprimir_cupom, args=(_pedido_dict(pedido),), daemon=True).start()
+    return {"mensagem": "Reimpressão iniciada"}
+
+
+def _pedido_dict(p: Pedido) -> dict:
+    return {
+        "id": p.id,
+        "numero": p.numero,
+        "status": p.status,
+        "valor_total": p.valor_total,
+        "data_hora": str(p.data_hora),
+        "forma_pagamento": p.forma_pagamento,
+        "itens": [
+            {"produto": i.produto.nome, "quantidade": i.quantidade, "valor": i.valor}
+            for i in p.itens
+        ],
+    }
+
+
+# ── Relatórios ────────────────────────────────────────────────────────────────
 
 @router.get("/relatorios/vendas")
-def relatorio_vendas(data_inicio: Optional[str] = None, data_fim: Optional[str] = None,
-                     db: Session = Depends(get_db)):
-    """Faturamento e ranking de produtos mais vendidos."""
-    q = db.query(ItemPedido).join(Pedido).filter(Pedido.status != "cancelado")
-
+def relatorio_vendas(
+    data_inicio: str | None = None,
+    data_fim: str | None = None,
+    db: Session = Depends(get_db),
+):
+    q = db.query(PedidoItem).join(Pedido).filter(Pedido.status != "cancelado")
     if data_inicio:
-        q = q.filter(Pedido.criado_em >= datetime.fromisoformat(data_inicio))
+        q = q.filter(Pedido.data_hora >= datetime.fromisoformat(data_inicio))
     if data_fim:
-        q = q.filter(Pedido.criado_em <= datetime.fromisoformat(data_fim + "T23:59:59"))
+        q = q.filter(Pedido.data_hora <= datetime.fromisoformat(data_fim + "T23:59:59"))
 
-    itens = q.all()
-    ranking = {}
-    for item in itens:
+    ranking: dict[str, dict] = {}
+    for item in q.all():
         nome = item.produto.nome
         if nome not in ranking:
             ranking[nome] = {"quantidade": 0, "faturamento": 0.0}
         ranking[nome]["quantidade"] += item.quantidade
-        ranking[nome]["faturamento"] += item.quantidade * item.preco_unit
+        ranking[nome]["faturamento"] += item.quantidade * item.valor
 
     total_geral = sum(v["faturamento"] for v in ranking.values())
     sorted_ranking = sorted(ranking.items(), key=lambda x: x[1]["quantidade"], reverse=True)
 
+    q_pedidos = db.query(Pedido).filter(Pedido.status != "cancelado")
+    if data_inicio:
+        q_pedidos = q_pedidos.filter(Pedido.data_hora >= datetime.fromisoformat(data_inicio))
+    if data_fim:
+        q_pedidos = q_pedidos.filter(Pedido.data_hora <= datetime.fromisoformat(data_fim + "T23:59:59"))
+
     return {
         "total_faturamento": round(total_geral, 2),
-        "total_pedidos": db.query(Pedido).filter(Pedido.status != "cancelado").count(),
-        "ranking": [{"produto": k, **v} for k, v in sorted_ranking]
+        "total_pedidos": q_pedidos.count(),
+        "ranking": [{"produto": k, **v} for k, v in sorted_ranking],
     }
-
-
-@router.get("/estoque/alertas")
-def alertas_estoque(db: Session = Depends(get_db)):
-    """Retorna produtos com estoque abaixo do mínimo."""
-    from sqlalchemy import text
-    baixo = db.query(Estoque).join(Produto).filter(
-        Estoque.quantidade <= Estoque.minimo,
-        Produto.ativo == 1
-    ).all()
-    return [{"produto": e.produto.nome, "atual": e.quantidade, "minimo": e.minimo}
-            for e in baixo]

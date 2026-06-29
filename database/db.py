@@ -3,10 +3,7 @@ database/db.py
 Configuração do banco SQLite e modelos SQLAlchemy
 """
 
-from sqlalchemy import (
-    create_engine, Column, Integer, String,
-    Float, DateTime, ForeignKey, Text
-)
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Text
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from datetime import datetime
 import os
@@ -19,70 +16,61 @@ SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 Base = declarative_base()
 
 
-# ── Modelos ─────────────────────────────────────────────────────────────────
+class Categoria(Base):
+    __tablename__ = "categoria"
+
+    id   = Column(Integer, primary_key=True)
+    nome = Column(String(100), nullable=False, unique=True)
+
+    produtos = relationship("Produto", back_populates="categoria")
+
 
 class Produto(Base):
-    __tablename__ = "produtos"
+    __tablename__ = "produto"
 
-    id          = Column(Integer, primary_key=True, index=True)
-    nome        = Column(String(100), nullable=False)
-    descricao   = Column(Text, default="")
-    preco       = Column(Float, nullable=False)
-    categoria   = Column(String(50), default="Sorvete")
-    imagem      = Column(String(200), default="")   # caminho relativo em ui/assets/
-    ativo       = Column(Integer, default=1)         # 1=ativo, 0=inativo
-    criado_em   = Column(DateTime, default=datetime.now)
+    id           = Column(Integer, primary_key=True)
+    nome         = Column(String(100), nullable=False)
+    descricao    = Column(Text, default="")
+    preco        = Column(Float, nullable=False)
+    imagem       = Column(String(200), default="")
+    ativo        = Column(Integer, default=1)
+    categoria_id = Column(Integer, ForeignKey("categoria.id"), nullable=True)
 
-    estoque     = relationship("Estoque", back_populates="produto", uselist=False)
-    itens       = relationship("ItemPedido", back_populates="produto")
-
-
-class Estoque(Base):
-    __tablename__ = "estoque"
-
-    id          = Column(Integer, primary_key=True)
-    produto_id  = Column(Integer, ForeignKey("produtos.id"), unique=True)
-    quantidade  = Column(Integer, default=0)
-    minimo      = Column(Integer, default=5)         # alerta de estoque baixo
-    atualizado  = Column(DateTime, default=datetime.now, onupdate=datetime.now)
-
-    produto     = relationship("Produto", back_populates="estoque")
+    categoria = relationship("Categoria", back_populates="produtos")
+    itens     = relationship("PedidoItem", back_populates="produto")
 
 
 class Pedido(Base):
-    __tablename__ = "pedidos"
+    __tablename__ = "pedido"
 
-    id            = Column(Integer, primary_key=True)
-    status        = Column(String(20), default="pendente")  # pendente | pronto | cancelado
-    total         = Column(Float, default=0.0)
-    forma_pagto   = Column(String(30), default="dinheiro")
-    criado_em     = Column(DateTime, default=datetime.now)
-    observacao    = Column(Text, default="")
+    id              = Column(Integer, primary_key=True)
+    numero          = Column(Integer, unique=True)
+    status          = Column(String(20), default="pendente")
+    valor_total     = Column(Float, default=0.0)
+    data_hora       = Column(DateTime, default=datetime.now)
+    forma_pagamento = Column(String(30), default="dinheiro")
 
-    itens         = relationship("ItemPedido", back_populates="pedido")
-
-
-class ItemPedido(Base):
-    __tablename__ = "itens_pedido"
-
-    id          = Column(Integer, primary_key=True)
-    pedido_id   = Column(Integer, ForeignKey("pedidos.id"))
-    produto_id  = Column(Integer, ForeignKey("produtos.id"))
-    quantidade  = Column(Integer, default=1)
-    preco_unit  = Column(Float, nullable=False)
-
-    pedido      = relationship("Pedido", back_populates="itens")
-    produto     = relationship("Produto", back_populates="itens")
+    itens = relationship("PedidoItem", back_populates="pedido")
 
 
-# ── Funções utilitárias ──────────────────────────────────────────────────────
+class PedidoItem(Base):
+    __tablename__ = "pedido_item"
+
+    id         = Column(Integer, primary_key=True)
+    pedido_id  = Column(Integer, ForeignKey("pedido.id"))
+    produto_id = Column(Integer, ForeignKey("produto.id"))
+    quantidade = Column(Integer, default=1)
+    valor      = Column(Float, nullable=False)
+
+    pedido  = relationship("Pedido", back_populates="itens")
+    produto = relationship("Produto", back_populates="itens")
+
 
 def criar_tabelas():
     Base.metadata.create_all(bind=engine)
 
 
 def get_db():
-    """Dependência FastAPI — fornece sessão e fecha ao final."""
     db = SessionLocal()
     try:
         yield db
@@ -91,30 +79,37 @@ def get_db():
 
 
 def popular_dados_iniciais():
-    """Insere produtos e estoques de exemplo se o banco estiver vazio."""
     db = SessionLocal()
-    if db.query(Produto).count() > 0:
+    if db.query(Categoria).count() > 0:
         db.close()
         return
 
+    categorias = ["DinDin", "Picolé", "Sorvete"]
+    cat_map = {}
+    for nome in categorias:
+        c = Categoria(nome=nome)
+        db.add(c)
+        db.flush()
+        cat_map[nome] = c.id
+
     sabores = [
-        ("Chocolate",      "Cremoso sabor chocolate belga",        8.00),
-        ("Morango",        "Feito com morangos frescos",           8.00),
-        ("Baunilha",       "Clássico sabor baunilha",              7.50),
-        ("Pistache",       "Pistache importado",                   10.00),
-        ("Creme",          "Creme tradicional",                    7.00),
-        ("Maracujá",       "Azedinho e refrescante",               8.50),
-        ("Menta",          "Menta com gotas de chocolate",         9.00),
-        ("Caramelo",       "Caramelo salgado",                     9.50),
-        ("Limão Siciliano","Sorbet de limão siciliano",            8.00),
-        ("Uva",            "Sabor uva italiana",                   7.50),
+        ("Chocolate",  "Cremoso sabor chocolate",    3.00, "DinDin"),
+        ("Morango",    "Feito com morangos frescos",  3.00, "DinDin"),
+        ("Uva",        "Sabor uva gelada",            3.00, "DinDin"),
+        ("Maracujá",   "Azedinho e refrescante",      3.50, "DinDin"),
+        ("Creme",      "Creme tradicional",           2.50, "DinDin"),
+        ("Limão",      "Sabor limão gelado",          3.00, "DinDin"),
+        ("Abacaxi",    "Tropical e refrescante",      3.00, "DinDin"),
+        ("Manga",      "Sabor manga tropical",        3.00, "DinDin"),
+        ("Tamarindo",  "Especial de tamarindo",       3.50, "DinDin"),
+        ("Caju",       "Sabor caju nordestino",       3.00, "DinDin"),
     ]
 
-    for nome, desc, preco in sabores:
-        p = Produto(nome=nome, descricao=desc, preco=preco)
-        db.add(p)
-        db.flush()
-        db.add(Estoque(produto_id=p.id, quantidade=50, minimo=10))
+    for nome, desc, preco, cat in sabores:
+        db.add(Produto(
+            nome=nome, descricao=desc, preco=preco,
+            categoria_id=cat_map[cat],
+        ))
 
     db.commit()
     db.close()

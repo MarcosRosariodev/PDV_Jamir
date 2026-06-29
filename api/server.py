@@ -1,18 +1,29 @@
 """
 api/server.py
-Instância FastAPI com middleware CORS e rotas registradas
+Instância FastAPI com CORS, rotas e arquivos estáticos de imagens
 """
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+import pathlib
 import sys, os
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from api.routes import router
-from services.printer import imprimir_cupom
-import httpx
 
-app = FastAPI(title="PDV Jamir API", version="1.0.0")
+IMAGES_DIR = pathlib.Path(__file__).parent.parent / "images"
+IMAGES_DIR.mkdir(exist_ok=True)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("[API] Servidor PDV Jamir rodando em http://127.0.0.1:8000")
+    yield
+
+
+app = FastAPI(title="PDV Jamir API", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,52 +33,4 @@ app.add_middleware(
 )
 
 app.include_router(router)
-
-
-@app.on_event("startup")
-async def startup():
-    print("[API] Servidor PDV Jamir rodando em http://127.0.0.1:8000")
-
-
-# Hook de impressão automática ao criar pedido
-_original_criar = router.routes  # registrado via override abaixo
-
-from fastapi import Request
-from fastapi.responses import JSONResponse
-
-@app.middleware("http")
-async def imprimir_apos_pedido(request: Request, call_next):
-    response = await call_next(request)
-
-    if request.method == "POST" and request.url.path == "/pedidos" and response.status_code == 200:
-        # Lê corpo da resposta para obter id do pedido e dispara impressão
-        import json
-        body = b""
-        async for chunk in response.body_iterator:
-            body += chunk
-
-        try:
-            data = json.loads(body)
-            pedido_id = data.get("id")
-            if pedido_id:
-                # Busca detalhes do pedido para impressão
-                try:
-                    r = httpx.get(f"http://127.0.0.1:8000/pedidos?status=pendente", timeout=3)
-                    pedidos = r.json()
-                    pedido = next((p for p in pedidos if p["id"] == pedido_id), None)
-                    if pedido:
-                        import threading
-                        threading.Thread(
-                            target=imprimir_cupom, args=(pedido,), daemon=True
-                        ).start()
-                except Exception as e:
-                    print(f"[IMPRESSORA] Erro ao buscar pedido para impressão: {e}")
-        except Exception:
-            pass
-
-        from starlette.responses import Response
-        return Response(content=body, status_code=response.status_code,
-                        headers=dict(response.headers),
-                        media_type=response.media_type)
-
-    return response
+app.mount("/imagens", StaticFiles(directory=str(IMAGES_DIR)), name="imagens")
