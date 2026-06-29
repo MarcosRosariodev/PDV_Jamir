@@ -40,6 +40,7 @@ class ProdutoCreate(BaseModel):
     descricao: str = ""
     preco: float
     imagem: str = ""
+    estoque: int = 0
     categoria_id: int | None = None
 
 class ProdutoUpdate(BaseModel):
@@ -47,6 +48,7 @@ class ProdutoUpdate(BaseModel):
     descricao: str | None = None
     preco: float | None = None
     ativo: int | None = None
+    estoque: int | None = None
     categoria_id: int | None = None
 
 
@@ -146,6 +148,7 @@ def _produto_dict(p: Produto, admin: bool = False) -> dict:
         "descricao": p.descricao,
         "preco": p.preco,
         "imagem": p.imagem,
+        "estoque": p.estoque if p.estoque is not None else 0,
         "categoria": p.categoria.nome if p.categoria else "",
         "categoria_id": p.categoria_id,
     }
@@ -168,6 +171,12 @@ def criar_pedido(dados: PedidoCreate, db: Session = Depends(get_db)):
         if not produto:
             raise HTTPException(status_code=404,
                                 detail=f"Produto {item.produto_id} não encontrado")
+        estoque_atual = produto.estoque if produto.estoque is not None else 0
+        if estoque_atual < item.quantidade:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Estoque insuficiente para '{produto.nome}' (disponível: {estoque_atual})",
+            )
         total += produto.preco * item.quantidade
         itens_validados.append((produto, item.quantidade, produto.preco))
 
@@ -186,6 +195,7 @@ def criar_pedido(dados: PedidoCreate, db: Session = Depends(get_db)):
             quantidade=qtd,
             valor=preco,
         ))
+        produto.estoque = (produto.estoque or 0) - qtd
 
     db.commit()
 
@@ -225,6 +235,19 @@ def atualizar_status(pedido_id: int, dados: PedidoStatusUpdate, db: Session = De
     pedido.status = dados.status
     db.commit()
     return {"mensagem": "Status atualizado"}
+
+
+@router.delete("/pedidos/{pedido_id}")
+def deletar_pedido(pedido_id: int, db: Session = Depends(get_db)):
+    pedido = db.query(Pedido).filter(Pedido.id == pedido_id).first()
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+    if pedido.status != "cancelado":
+        raise HTTPException(status_code=400, detail="Apenas pedidos cancelados podem ser excluídos")
+    db.query(PedidoItem).filter(PedidoItem.pedido_id == pedido_id).delete()
+    db.delete(pedido)
+    db.commit()
+    return {"mensagem": "Pedido excluído"}
 
 
 @router.post("/pedidos/{pedido_id}/reimprimir")

@@ -3,7 +3,7 @@ database/db.py
 Configuração do banco SQLite e modelos SQLAlchemy
 """
 
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Text
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Text, text
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from datetime import datetime
 import os
@@ -34,6 +34,7 @@ class Produto(Base):
     preco        = Column(Float, nullable=False)
     imagem       = Column(String(200), default="")
     ativo        = Column(Integer, default=1)
+    estoque      = Column(Integer, default=0)
     categoria_id = Column(Integer, ForeignKey("categoria.id"), nullable=True)
 
     categoria = relationship("Categoria", back_populates="produtos")
@@ -68,6 +69,12 @@ class PedidoItem(Base):
 
 def criar_tabelas():
     Base.metadata.create_all(bind=engine)
+    # Migração: adiciona coluna estoque se ainda não existir
+    with engine.connect() as conn:
+        cols = [row[1] for row in conn.execute(text("PRAGMA table_info(produto)"))]
+        if "estoque" not in cols:
+            conn.execute(text("ALTER TABLE produto ADD COLUMN estoque INTEGER DEFAULT 0"))
+            conn.commit()
 
 
 def get_db():
@@ -108,7 +115,7 @@ def popular_dados_iniciais():
     for nome, desc, preco, cat in sabores:
         db.add(Produto(
             nome=nome, descricao=desc, preco=preco,
-            categoria_id=cat_map[cat],
+            categoria_id=cat_map[cat], estoque=50,
         ))
 
     db.commit()

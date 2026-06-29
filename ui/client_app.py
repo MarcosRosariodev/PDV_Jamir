@@ -137,27 +137,40 @@ class AppCliente(tk.Tk):
         for w in self.frm_grid.winfo_children():
             w.destroy()
         colunas = 3
-        for i, prod in enumerate(self.produtos):
+        # produtos com estoque > 0 primeiro; esgotados ao final
+        ordenados = sorted(
+            self.produtos,
+            key=lambda p: 0 if (p.get("estoque") or 0) > 0 else 1,
+        )
+        for i, prod in enumerate(ordenados):
             self._card_produto(self.frm_grid, prod, i // colunas, i % colunas)
 
     def _card_produto(self, parent, prod, row, col):
-        frm = tk.Frame(parent, bg=COR_CARD, relief="flat", bd=0,
-                       highlightthickness=1, highlightbackground="#E0E0E0",
-                       cursor="hand2")
+        esgotado = (prod.get("estoque") or 0) == 0
+        cor_fundo = "#EFEFEF" if esgotado else COR_CARD
+        cursor    = "" if esgotado else "hand2"
+
+        frm = tk.Frame(parent, bg=cor_fundo, relief="flat", bd=0,
+                       highlightthickness=1,
+                       highlightbackground="#CCCCCC" if esgotado else "#E0E0E0",
+                       cursor=cursor)
         frm.grid(row=row, column=col, padx=8, pady=8, sticky="nsew")
 
-        # Começa com placeholder; substitui pela foto real se houver
+        # Imagem
         img = _placeholder_img(prod["nome"])
         self._imgs[prod["id"]] = img
-        lbl_img = tk.Label(frm, image=img, bg=COR_CARD)
+        lbl_img = tk.Label(frm, image=img, bg=cor_fundo)
         lbl_img.pack(pady=(12, 4))
 
         if prod.get("imagem"):
-            def _load(pid=prod["id"], fname=prod["imagem"]):
+            def _load(pid=prod["id"], fname=prod["imagem"], bg=cor_fundo):
                 try:
                     r = httpx.get(f"{API_BASE}/imagens/{fname}", timeout=5)
                     if r.status_code == 200:
                         foto = Image.open(BytesIO(r.content)).resize((120, 120), Image.LANCZOS)
+                        # Esgotado: aplica efeito de dessaturação
+                        if esgotado:
+                            foto = foto.convert("LA").convert("RGB")
                         photo = ImageTk.PhotoImage(foto)
                         self._imgs[pid] = photo
                         self.after(0, lambda: lbl_img.configure(image=photo))
@@ -165,13 +178,21 @@ class AppCliente(tk.Tk):
                     pass
             threading.Thread(target=_load, daemon=True).start()
 
-        tk.Label(frm, text=prod["nome"], bg=COR_CARD, fg=COR_TEXTO,
+        cor_nome  = "#AAAAAA" if esgotado else COR_TEXTO
+        cor_preco = "#AAAAAA" if esgotado else COR_PRIMARIA
+        tk.Label(frm, text=prod["nome"], bg=cor_fundo, fg=cor_nome,
                  font=self.f_card, wraplength=140).pack()
-        tk.Label(frm, text=f"R$ {prod['preco']:.2f}", bg=COR_CARD,
-                 fg=COR_PRIMARIA, font=self.f_preco).pack(pady=(0, 12))
+        tk.Label(frm, text=f"R$ {prod['preco']:.2f}", bg=cor_fundo,
+                 fg=cor_preco, font=self.f_preco).pack()
 
-        for w in [frm, lbl_img] + list(frm.winfo_children()):
-            w.bind("<Button-1>", lambda e, p=prod: self._adicionar(p))
+        if esgotado:
+            tk.Label(frm, text="ESGOTADO", bg="#E53935", fg="white",
+                     font=self.f_small, padx=8, pady=2).pack(pady=(4, 12))
+        else:
+            tk.Label(frm, text=f"Estoque: {prod['estoque']}", bg=cor_fundo,
+                     fg="#AAAAAA", font=self.f_small).pack(pady=(2, 12))
+            for w in [frm, lbl_img] + list(frm.winfo_children()):
+                w.bind("<Button-1>", lambda e, p=prod: self._adicionar(p))
 
     # ── Carrinho ─────────────────────────────────────────────────────────────
 

@@ -316,11 +316,39 @@ class AdminApp(ctk.CTk):
                     self.after(0, lambda: messagebox.showerror("Erro", str(e)))
             threading.Thread(target=_post, daemon=True).start()
 
+        def excluir_cancelado():
+            num = _num_selecionado()
+            if num is None:
+                return
+            sel = tree.selection()
+            status_atual = tree.item(sel[0])["values"][2]
+            if status_atual != "cancelado":
+                messagebox.showwarning(
+                    "Não permitido",
+                    f"Apenas pedidos CANCELADOS podem ser excluídos.\n"
+                    f"O pedido #{num} está com status '{status_atual}'.",
+                )
+                return
+            if not messagebox.askyesno(
+                "Confirmar exclusão",
+                f"Excluir permanentemente o pedido #{num}?\nEssa ação não pode ser desfeita.",
+            ):
+                return
+            pid = _id_por_numero[num]
+            def _del():
+                try:
+                    api_delete(f"/pedidos/{pid}")
+                    self.after(0, carregar)
+                except Exception as e:
+                    self.after(0, lambda: messagebox.showerror("Erro", str(e)))
+            threading.Thread(target=_del, daemon=True).start()
+
         acoes = [
             ("✔  Pronto",       "#2E7D32", "#1B5E20", lambda: mudar_status("pronto")),
             ("✖  Cancelar",     "#C62828", "#B71C1C", lambda: mudar_status("cancelado")),
             ("🖨  Reimprimir",  "#455A64", "#37474F", reimprimir),
             ("↻  Atualizar",    None,      None,      lambda: carregar()),
+            ("🗑  Excluir",     "#4E342E", "#3E2723", excluir_cancelado),
         ]
         for txt, fg, hover, cmd in acoes:
             kw: dict = {}
@@ -378,10 +406,11 @@ class AdminApp(ctk.CTk):
 
         cols_cfg = [
             ("id",        "ID",        55,  "center"),
-            ("nome",      "Nome",      220, "w"),
-            ("categoria", "Categoria", 140, "w"),
-            ("preco",     "Preço",     95,  "center"),
-            ("ativo",     "Ativo",     70,  "center"),
+            ("nome",      "Nome",      200, "w"),
+            ("categoria", "Categoria", 130, "w"),
+            ("preco",     "Preço",     90,  "center"),
+            ("estoque",   "Estoque",   80,  "center"),
+            ("ativo",     "Ativo",     65,  "center"),
         ]
         frm_tree, tree = self._tree_frame(cols_cfg)
         frm_tree.grid(row=2, column=0, padx=24, pady=4, sticky="nsew")
@@ -391,15 +420,16 @@ class AdminApp(ctk.CTk):
         frm_edit.grid(row=3, column=0, padx=24, pady=(4, 16), sticky="ew")
         frm_edit.grid_columnconfigure(1, weight=1)
 
+        # -- Linha 0: preço + ativo + foto --
         ctk.CTkLabel(frm_edit, text="Edição rápida:",
                      text_color="gray55", font=ctk.CTkFont(size=11),
-                     ).grid(row=0, column=0, padx=16, pady=14, sticky="w")
+                     ).grid(row=0, column=0, padx=16, pady=(12, 4), sticky="w")
 
         var_preco = ctk.StringVar()
-        ctk.CTkLabel(frm_edit, text="Novo preço R$:"
-                     ).grid(row=0, column=1, padx=(20, 4), pady=14, sticky="e")
-        ctk.CTkEntry(frm_edit, textvariable=var_preco, width=100, height=34,
-                     ).grid(row=0, column=2, padx=4, pady=14)
+        ctk.CTkLabel(frm_edit, text="Preço R$:"
+                     ).grid(row=0, column=1, padx=(20, 4), pady=(12, 4), sticky="e")
+        ctk.CTkEntry(frm_edit, textvariable=var_preco, width=90, height=32,
+                     ).grid(row=0, column=2, padx=4, pady=(12, 4))
 
         def salvar_preco():
             sel = tree.selection()
@@ -430,7 +460,7 @@ class AdminApp(ctk.CTk):
                 return
             vals = tree.item(sel[0])["values"]
             pid = int(vals[0])
-            ativo_atual = vals[4] == "Sim"
+            ativo_atual = vals[5] == "Sim"
             def _put():
                 try:
                     api_put(f"/produtos/{pid}", {"ativo": 0 if ativo_atual else 1})
@@ -465,27 +495,106 @@ class AdminApp(ctk.CTk):
                     self.after(0, lambda: messagebox.showerror("Erro", str(e)))
             threading.Thread(target=_upload, daemon=True).start()
 
-        ctk.CTkButton(frm_edit, text="Salvar Preço", width=120, height=34,
+        ctk.CTkButton(frm_edit, text="Salvar Preço", width=110, height=32,
                       corner_radius=8, command=salvar_preco,
-                      ).grid(row=0, column=3, padx=10, pady=14)
-        ctk.CTkButton(frm_edit, text="Ativar / Desativar", width=150, height=34,
+                      ).grid(row=0, column=3, padx=8, pady=(12, 4))
+        ctk.CTkButton(frm_edit, text="Ativar / Desativar", width=140, height=32,
                       corner_radius=8, fg_color="#607D8B", hover_color="#546E7A",
                       command=toggle_ativo,
-                      ).grid(row=0, column=4, padx=(0, 8), pady=14)
-        ctk.CTkButton(frm_edit, text="📷 Alterar Foto", width=130, height=34,
+                      ).grid(row=0, column=4, padx=(0, 8), pady=(12, 4))
+        ctk.CTkButton(frm_edit, text="📷 Alterar Foto", width=120, height=32,
                       corner_radius=8, fg_color="#37474F", hover_color="#263238",
                       command=alterar_foto,
-                      ).grid(row=0, column=5, padx=(0, 16), pady=14)
+                      ).grid(row=0, column=5, padx=(0, 16), pady=(12, 4))
+
+        # -- Linha 1: estoque --
+        sep_h = ctk.CTkFrame(frm_edit, height=1, fg_color=("gray80", "gray30"))
+        sep_h.grid(row=1, column=0, columnspan=6, padx=12, pady=2, sticky="ew")
+
+        ctk.CTkLabel(frm_edit, text="Estoque:",
+                     text_color="gray55", font=ctk.CTkFont(size=11),
+                     ).grid(row=2, column=0, padx=16, pady=(4, 12), sticky="w")
+
+        var_estoque = ctk.StringVar()
+        ctk.CTkLabel(frm_edit, text="Qtd. em estoque:"
+                     ).grid(row=2, column=1, padx=(20, 4), pady=(4, 12), sticky="e")
+        ctk.CTkEntry(frm_edit, textvariable=var_estoque, width=90, height=32,
+                     ).grid(row=2, column=2, padx=4, pady=(4, 12))
+
+        def salvar_estoque():
+            sel = tree.selection()
+            if not sel:
+                messagebox.showwarning("Aviso", "Selecione um produto.")
+                return
+            pid = int(tree.item(sel[0])["values"][0])
+            raw = var_estoque.get().strip()
+            if not raw:
+                return
+            try:
+                qtd = int(raw)
+                if qtd < 0:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("Erro", "Estoque deve ser número inteiro ≥ 0.")
+                return
+            def _put():
+                try:
+                    api_put(f"/produtos/{pid}", {"estoque": qtd})
+                    self.after(0, self._view_produtos)
+                except Exception as e:
+                    self.after(0, lambda: messagebox.showerror("Erro", str(e)))
+            threading.Thread(target=_put, daemon=True).start()
+
+        def ajustar_estoque(delta: int):
+            sel = tree.selection()
+            if not sel:
+                messagebox.showwarning("Aviso", "Selecione um produto.")
+                return
+            vals = tree.item(sel[0])["values"]
+            pid = int(vals[0])
+            atual = int(vals[4]) if vals[4] != "" else 0
+            novo = max(0, atual + delta)
+            def _put():
+                try:
+                    api_put(f"/produtos/{pid}", {"estoque": novo})
+                    self.after(0, self._view_produtos)
+                except Exception as e:
+                    self.after(0, lambda: messagebox.showerror("Erro", str(e)))
+            threading.Thread(target=_put, daemon=True).start()
+
+        ctk.CTkButton(frm_edit, text="Salvar Estoque", width=120, height=32,
+                      corner_radius=8, fg_color="#1B5E20", hover_color="#2E7D32",
+                      command=salvar_estoque,
+                      ).grid(row=2, column=3, padx=8, pady=(4, 12))
+        ctk.CTkButton(frm_edit, text="− 10", width=70, height=32,
+                      corner_radius=8, fg_color="#BF360C", hover_color="#E64A19",
+                      command=lambda: ajustar_estoque(-10),
+                      ).grid(row=2, column=4, padx=(0, 4), pady=(4, 12), sticky="w")
+        ctk.CTkButton(frm_edit, text="+ 10", width=70, height=32,
+                      corner_radius=8, fg_color="#1565C0", hover_color="#1976D2",
+                      command=lambda: ajustar_estoque(10),
+                      ).grid(row=2, column=4, padx=(80, 0), pady=(4, 12), sticky="w")
+        ctk.CTkButton(frm_edit, text="+ 50", width=70, height=32,
+                      corner_radius=8, fg_color="#4527A0", hover_color="#512DA8",
+                      command=lambda: ajustar_estoque(50),
+                      ).grid(row=2, column=5, padx=(0, 16), pady=(4, 12))
 
         def preencher(prods: list):
             tree.delete(*tree.get_children())
             for p in prods:
-                tag = "ativo" if p["ativo"] else "inativo"
+                estoque = p.get("estoque", 0) or 0
+                if not p["ativo"]:
+                    tag = "inativo"
+                elif estoque == 0:
+                    tag = "esgotado"
+                else:
+                    tag = "ativo"
                 tree.insert("", "end", values=(
                     p["id"], p["nome"], p.get("categoria", ""),
-                    f"R$ {p['preco']:.2f}", "Sim" if p["ativo"] else "Não",
+                    f"R$ {p['preco']:.2f}", estoque, "Sim" if p["ativo"] else "Não",
                 ), tags=(tag,))
-            tree.tag_configure("inativo", foreground="#888888")
+            tree.tag_configure("inativo",  foreground="#888888")
+            tree.tag_configure("esgotado", foreground="#FF8A65")
 
         def carregar():
             def _get():
@@ -515,33 +624,34 @@ class AdminApp(ctk.CTk):
 
         # ── Campos de texto ──
         campos = [
-            ("Nome *",    ctk.StringVar()),
-            ("Descrição", ctk.StringVar()),
-            ("Preço *",   ctk.StringVar()),
+            ("Nome *",          ctk.StringVar()),
+            ("Descrição",       ctk.StringVar()),
+            ("Preço *",         ctk.StringVar()),
+            ("Estoque inicial", ctk.StringVar(value="50")),
         ]
         for i, (lbl, var) in enumerate(campos):
             ctk.CTkLabel(dlg, text=lbl).grid(row=i, column=0, padx=20, pady=8, sticky="e")
             ctk.CTkEntry(dlg, textvariable=var, width=260, height=34,
                          ).grid(row=i, column=1, padx=20, pady=8, sticky="w")
 
-        ctk.CTkLabel(dlg, text="Categoria").grid(row=3, column=0, padx=20, pady=8, sticky="e")
+        ctk.CTkLabel(dlg, text="Categoria").grid(row=4, column=0, padx=20, pady=8, sticky="e")
         var_cat  = ctk.StringVar()
         cat_nomes = [c["nome"] for c in cats]
         cat_ids   = {c["nome"]: c["id"] for c in cats}
         if cat_nomes:
             var_cat.set(cat_nomes[0])
         ctk.CTkComboBox(dlg, variable=var_cat, values=cat_nomes, state="readonly", width=260,
-                        ).grid(row=3, column=1, padx=20, pady=8, sticky="w")
+                        ).grid(row=4, column=1, padx=20, pady=8, sticky="w")
 
         # ── Seção de foto ──
         sep = ctk.CTkFrame(dlg, height=2, fg_color=("gray80", "gray28"))
-        sep.grid(row=4, column=0, columnspan=2, padx=20, pady=(12, 4), sticky="ew")
+        sep.grid(row=5, column=0, columnspan=2, padx=20, pady=(12, 4), sticky="ew")
 
         ctk.CTkLabel(dlg, text="Foto do produto:", font=ctk.CTkFont(size=12, weight="bold"),
-                     ).grid(row=5, column=0, columnspan=2, padx=20, pady=(4, 8), sticky="w")
+                     ).grid(row=6, column=0, columnspan=2, padx=20, pady=(4, 8), sticky="w")
 
         frm_foto = ctk.CTkFrame(dlg, corner_radius=8)
-        frm_foto.grid(row=6, column=0, columnspan=2, padx=20, pady=(0, 8), sticky="ew")
+        frm_foto.grid(row=7, column=0, columnspan=2, padx=20, pady=(0, 8), sticky="ew")
         frm_foto.grid_columnconfigure(1, weight=1)
 
         # Preview 110×110
@@ -584,9 +694,10 @@ class AdminApp(ctk.CTk):
 
         # ── Salvar ──
         def salvar():
-            nome    = campos[0][1].get().strip()
-            desc    = campos[1][1].get().strip()
-            preco_s = campos[2][1].get().strip()
+            nome      = campos[0][1].get().strip()
+            desc      = campos[1][1].get().strip()
+            preco_s   = campos[2][1].get().strip()
+            estoque_s = campos[3][1].get().strip()
             if not nome or not preco_s:
                 messagebox.showwarning("Aviso", "Nome e preço são obrigatórios.", parent=dlg)
                 return
@@ -595,9 +706,15 @@ class AdminApp(ctk.CTk):
             except ValueError:
                 messagebox.showerror("Erro", "Preço inválido.", parent=dlg)
                 return
+            try:
+                estoque = int(estoque_s) if estoque_s else 0
+            except ValueError:
+                messagebox.showerror("Erro", "Estoque deve ser número inteiro.", parent=dlg)
+                return
 
             payload = {
                 "nome": nome, "descricao": desc, "preco": preco,
+                "estoque": estoque,
                 "categoria_id": cat_ids.get(var_cat.get()),
             }
 
@@ -624,7 +741,7 @@ class AdminApp(ctk.CTk):
 
         ctk.CTkButton(dlg, text="Salvar Produto", height=40, corner_radius=8,
                       command=salvar,
-                      ).grid(row=7, column=0, columnspan=2, padx=20, pady=16, sticky="e")
+                      ).grid(row=8, column=0, columnspan=2, padx=20, pady=16, sticky="e")
 
     # ── Categorias ───────────────────────────────────────────────────────────
 
@@ -710,31 +827,54 @@ class AdminApp(ctk.CTk):
         self._titulo("Relatórios de Vendas")
         self.main.grid_rowconfigure(2, weight=1)
 
-        frm_f = ctk.CTkFrame(self.main, fg_color="transparent")
-        frm_f.grid(row=1, column=0, padx=24, pady=(0, 4), sticky="nw")
+        TOP_N   = 5
+        _cache  = [None]          # _cache[0] = último dict de dados
+        _todos  = [False]         # _todos[0] = mostrar todos os produtos
 
         hoje = datetime.now()
         periodos = [
-            ("Hoje",    hoje.strftime("%Y-%m-%d"),              hoje.strftime("%Y-%m-%d")),
-            ("7 dias",  (hoje - timedelta(days=7)).strftime("%Y-%m-%d"), hoje.strftime("%Y-%m-%d")),
-            ("30 dias", (hoje - timedelta(days=30)).strftime("%Y-%m-%d"), hoje.strftime("%Y-%m-%d")),
+            ("Hoje",    hoje.strftime("%Y-%m-%d"),                          hoje.strftime("%Y-%m-%d")),
+            ("7 dias",  (hoje - timedelta(days=7)).strftime("%Y-%m-%d"),    hoje.strftime("%Y-%m-%d")),
+            ("30 dias", (hoje - timedelta(days=30)).strftime("%Y-%m-%d"),   hoje.strftime("%Y-%m-%d")),
             ("Tudo",    "", ""),
         ]
+
+        # ── Barra de controles ──
+        frm_ctrl = ctk.CTkFrame(self.main, fg_color="transparent")
+        frm_ctrl.grid(row=1, column=0, padx=24, pady=(0, 6), sticky="ew")
+
+        # Tipo de gráfico
+        var_tipo = ctk.StringVar(value="colunas")
+        frm_tipo = ctk.CTkFrame(frm_ctrl, corner_radius=8)
+        frm_tipo.pack(side="right", padx=(8, 0))
+        ctk.CTkLabel(frm_tipo, text="Gráfico:", font=ctk.CTkFont(size=11),
+                     text_color="gray55").pack(side="left", padx=(10, 2))
+        for lbl, val in [("≡ Barras", "barras"), ("■ Colunas", "colunas")]:
+            ctk.CTkRadioButton(
+                frm_tipo, text=lbl, variable=var_tipo, value=val,
+                font=ctk.CTkFont(size=11),
+                command=lambda: _cache[0] and renderizar(_cache[0]),
+            ).pack(side="left", padx=8, pady=6)
+
+        # Período
         for lbl, ini, fim in periodos:
-            ctk.CTkButton(frm_f, text=lbl, width=82, height=34, corner_radius=8,
-                          fg_color="gray40", hover_color="gray30",
-                          command=lambda i=ini, f=fim: carregar(i, f),
-                          ).pack(side="left", padx=4)
+            ctk.CTkButton(
+                frm_ctrl, text=lbl, width=82, height=34, corner_radius=8,
+                fg_color="gray40", hover_color="gray30",
+                command=lambda i=ini, f=fim: carregar(i, f),
+            ).pack(side="left", padx=4)
 
-        self.frm_graf = ctk.CTkFrame(self.main, corner_radius=10)
-        self.frm_graf.grid(row=2, column=0, padx=24, pady=(4, 16), sticky="nsew")
+        # ── Área de conteúdo com scroll ──
+        self._rel_scroll = ctk.CTkScrollableFrame(
+            self.main, fg_color="transparent", corner_radius=0)
+        self._rel_scroll.grid(row=2, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        self._rel_scroll.grid_columnconfigure(0, weight=1)
 
+        # ── Funções ──
         def carregar(ini: str = "", fim: str = ""):
             params = []
-            if ini:
-                params.append(f"data_inicio={ini}")
-            if fim:
-                params.append(f"data_fim={fim}")
+            if ini: params.append(f"data_inicio={ini}")
+            if fim: params.append(f"data_fim={fim}")
             url = "/relatorios/vendas" + (("?" + "&".join(params)) if params else "")
             def _get():
                 try:
@@ -745,59 +885,146 @@ class AdminApp(ctk.CTk):
             threading.Thread(target=_get, daemon=True).start()
 
         def renderizar(dados: dict):
-            for w in self.frm_graf.winfo_children():
+            _cache[0] = dados
+            for w in self._rel_scroll.winfo_children():
                 w.destroy()
 
-            ranking = dados["ranking"]
+            ranking  = dados.get("ranking", [])
+            total_f  = dados.get("total_faturamento", 0.0)
+            total_p  = dados.get("total_pedidos", 0)
+            top_nome = ranking[0]["produto"]   if ranking else "—"
+            top_qtd  = ranking[0]["quantidade"] if ranking else 0
+
+            # ── Métricas ──
+            frm_met = ctk.CTkFrame(self._rel_scroll, fg_color="transparent")
+            frm_met.pack(fill="x", padx=8, pady=(8, 10))
+            frm_met.grid_columnconfigure((0, 1, 2), weight=1)
+            metricas = [
+                ("💰  Faturamento",  f"R$ {total_f:.2f}",         "#4CAF50"),
+                ("📦  Pedidos",      str(total_p),                 "#2196F3"),
+                ("🏆  Mais Vendido", f"{top_nome}  ({top_qtd}×)", "#FF9800"),
+            ]
+            for col, (titulo, valor, cor) in enumerate(metricas):
+                card = ctk.CTkFrame(frm_met, corner_radius=12)
+                card.grid(row=0, column=col, padx=6, sticky="ew", ipady=2)
+                ctk.CTkLabel(card, text=titulo, text_color="gray55",
+                             font=ctk.CTkFont(size=11)).pack(anchor="w", padx=18, pady=(14, 2))
+                ctk.CTkLabel(card, text=valor, text_color=cor,
+                             font=ctk.CTkFont(size=17, weight="bold")).pack(anchor="w", padx=18, pady=(0, 14))
+
             if not ranking:
-                ctk.CTkLabel(self.frm_graf, text="Nenhum dado no período selecionado.",
+                ctk.CTkLabel(self._rel_scroll,
+                             text="Nenhuma venda registrada no período selecionado.",
                              text_color="gray55", font=ctk.CTkFont(size=13),
-                             ).pack(pady=60)
+                             ).pack(pady=40)
                 return
 
+            # Dados para o gráfico
+            mostrar_todos = _todos[0]
+            dados_vis     = ranking if mostrar_todos else ranking[:TOP_N]
+            nomes  = [r["produto"]    for r in dados_vis]
+            qtds   = [r["quantidade"] for r in dados_vis]
+            cores  = plt.cm.tab10.colors
+
             is_dark   = ctk.get_appearance_mode() == "Dark"
-            bg_fig    = "#1e1e1e" if is_dark else "#f0f0f0"
-            txt_color = "#DCE4EE" if is_dark else "#1A1A1A"
+            bg_fig    = "#1e1e1e" if is_dark else "#f5f5f5"
+            txt_clr   = "#DCE4EE" if is_dark else "#1A1A1A"
+            grid_clr  = "#333333" if is_dark else "#E0E0E0"
+            bar_clrs  = [cores[i % 10] for i in range(len(nomes))]
 
-            nomes = [r["produto"]     for r in ranking[:10]]
-            qtds  = [r["quantidade"]  for r in ranking[:10]]
-            fats  = [r["faturamento"] for r in ranking[:10]]
-            cores = plt.cm.tab10.colors
+            fig = Figure(figsize=(10, 4.0), dpi=96, facecolor=bg_fig)
+            ax  = fig.add_subplot(1, 1, 1)
+            ax.set_facecolor(bg_fig)
+            ax.tick_params(colors=txt_clr, labelsize=9)
+            for sp in ax.spines.values():
+                sp.set_color(grid_clr)
+            ax.set_axisbelow(True)
 
-            fig = Figure(figsize=(10, 4.8), dpi=96, facecolor=bg_fig)
-            ax1 = fig.add_subplot(1, 2, 1)
-            ax2 = fig.add_subplot(1, 2, 2)
-            ax1.set_facecolor(bg_fig)
-            ax2.set_facecolor(bg_fig)
+            if var_tipo.get() == "barras":
+                bars = ax.barh(nomes[::-1], qtds[::-1], color=bar_clrs[::-1], height=0.55)
+                ax.set_xlabel("Unidades vendidas", fontsize=9, color=txt_clr)
+                ax.xaxis.grid(True, color=grid_clr, linewidth=0.5)
+                mx = max(qtds) if qtds else 1
+                for bar, val in zip(bars, qtds[::-1]):
+                    ax.text(bar.get_width() + mx * 0.015,
+                            bar.get_y() + bar.get_height() / 2,
+                            str(val), va="center", fontsize=8, color=txt_clr)
+            else:
+                xs = list(range(len(nomes)))
+                bars = ax.bar(xs, qtds, color=bar_clrs, width=0.55)
+                ax.set_xticks(xs)
+                ax.set_xticklabels(nomes, rotation=20, ha="right", fontsize=9)
+                ax.set_ylabel("Unidades vendidas", fontsize=9, color=txt_clr)
+                ax.yaxis.grid(True, color=grid_clr, linewidth=0.5)
+                mx = max(qtds) if qtds else 1
+                for bar, val in zip(bars, qtds):
+                    ax.text(bar.get_x() + bar.get_width() / 2,
+                            bar.get_height() + mx * 0.02,
+                            str(val), ha="center", fontsize=8, color=txt_clr)
 
-            bars = ax1.barh(nomes[::-1], qtds[::-1],
-                            color=[cores[i % 10] for i in range(len(nomes))])
-            ax1.set_title("Mais vendidos (unidades)", fontsize=10, pad=8, color=txt_color)
-            ax1.tick_params(labelsize=8, colors=txt_color)
-            for sp in ax1.spines.values():
-                sp.set_color("gray40")
-            for bar, val in zip(bars, qtds[::-1]):
-                ax1.text(bar.get_width() + 0.05, bar.get_y() + bar.get_height() / 2,
-                         str(val), va="center", fontsize=8, color=txt_color)
+            sufixo = "" if mostrar_todos else f"  (top {min(TOP_N, len(ranking))})"
+            ax.set_title(f"Vendas por sabor{sufixo}", fontsize=11, pad=10, color=txt_clr)
+            fig.tight_layout(pad=1.6)
 
-            ax2.pie(fats, labels=nomes, autopct="%1.1f%%",
-                    colors=[cores[i % 10] for i in range(len(nomes))],
-                    textprops={"fontsize": 8, "color": txt_color})
-            ax2.set_title(f"Faturamento — R$ {dados['total_faturamento']:.2f}",
-                          fontsize=10, pad=8, color=txt_color)
-            fig.tight_layout(pad=1.5)
-
-            canvas = FigureCanvasTkAgg(fig, master=self.frm_graf)
+            # Container do gráfico — tk.Frame simples para evitar conflito com CTk canvas
+            import tkinter as tk
+            frm_graf = tk.Frame(self._rel_scroll,
+                                bg=bg_fig, bd=0, highlightthickness=0)
+            frm_graf.pack(fill="x", padx=8, pady=(0, 12))
+            canvas = FigureCanvasTkAgg(fig, master=frm_graf)
             canvas.draw()
-            canvas.get_tk_widget().pack(fill="both", expand=True, padx=4, pady=4)
+            canvas.get_tk_widget().pack(fill="both", expand=True)
+            self.update_idletasks()
 
-            ctk.CTkLabel(self.frm_graf,
-                         text=f"Total: {dados['total_pedidos']} pedidos   |   "
-                              f"Faturamento: R$ {dados['total_faturamento']:.2f}",
-                         font=ctk.CTkFont(size=12),
-                         ).pack(pady=6)
+            # ── Tabela de ranking ──
+            frm_rank = ctk.CTkFrame(self._rel_scroll, corner_radius=10)
+            frm_rank.pack(fill="x", padx=8, pady=(0, 6))
 
-        carregar()
+            # Cabeçalho
+            hdr = ctk.CTkFrame(frm_rank, fg_color=("gray78", "gray22"), corner_radius=6)
+            hdr.pack(fill="x", padx=6, pady=(6, 2))
+            for h, w in [("#", 48), ("Sabor", 220), ("Qtd vendida", 120), ("Faturamento", 130)]:
+                ctk.CTkLabel(hdr, text=h, font=ctk.CTkFont(size=11, weight="bold"),
+                             text_color="gray50", width=w, anchor="w",
+                             ).pack(side="left", padx=6, pady=5)
+
+            # Linhas
+            for idx, r in enumerate(dados_vis, start=1):
+                medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(idx, f"  {idx}°")
+                fg = ("gray88", "gray19") if idx % 2 == 0 else ("gray92", "gray16")
+                row_frm = ctk.CTkFrame(frm_rank, fg_color=fg, corner_radius=4)
+                row_frm.pack(fill="x", padx=6, pady=1)
+                for val, w in [
+                    (medal,                     48),
+                    (r["produto"],              220),
+                    (str(r["quantidade"]),      120),
+                    (f"R$ {r['faturamento']:.2f}", 130),
+                ]:
+                    ctk.CTkLabel(row_frm, text=val, font=ctk.CTkFont(size=11),
+                                 width=w, anchor="w",
+                                 ).pack(side="left", padx=6, pady=5)
+
+            ctk.CTkFrame(frm_rank, height=6, fg_color="transparent").pack()
+
+            # ── Botão ver todos / ocultar ──
+            ocultos = len(ranking) - TOP_N
+            if ocultos > 0:
+                lbl_btn = (f"▼  Ver todos os sabores  ({ocultos} ocultos)"
+                           if not mostrar_todos else
+                           "▲  Ocultar menos vendidos")
+                def _toggle():
+                    _todos[0] = not _todos[0]
+                    renderizar(_cache[0])
+                ctk.CTkButton(
+                    self._rel_scroll, text=lbl_btn, height=34, corner_radius=8,
+                    fg_color="transparent",
+                    hover_color=("gray80", "gray25"),
+                    text_color=("gray40", "gray70"),
+                    border_width=1, border_color=("gray70", "gray35"),
+                    command=_toggle,
+                ).pack(pady=(4, 20))
+
+        carregar()   # carrega "Tudo" ao abrir
 
 
 if __name__ == "__main__":
