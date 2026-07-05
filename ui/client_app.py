@@ -14,8 +14,9 @@ from io import BytesIO
 from PIL import Image, ImageTk
 
 API_BASE = "http://127.0.0.1:8000"
-ASSETS_DIR = pathlib.Path(__file__).parent.parent / "assets"
-LOGO_PATH = ASSETS_DIR / "Logojamir.png"
+ASSETS_DIR   = pathlib.Path(__file__).parent.parent / "assets"
+LOGO_PATH    = ASSETS_DIR / "Logojamir.png"
+VIDEO_PATH   = ASSETS_DIR / "WhatsApp Video 2026-07-02 at 08.20.44.mp4"
 
 # ── Paleta ───────────────────────────────────────────────────────────────────
 COR_HEADER       = "#0F2A52"   # navy escuro do header
@@ -86,6 +87,7 @@ class AppCliente(ctk.CTk):
         self._build_body()
         self._build_botao_fullscreen()
         self._carregar_produtos()
+        self.after(400, self._mostrar_screensaver)
 
     # ── Janela / tela cheia ──────────────────────────────────────────────────
 
@@ -578,6 +580,95 @@ class AppCliente(ctk.CTk):
 
         threading.Thread(target=enviar, daemon=True).start()
 
+    # ── Descanso de tela (screensaver vídeo) ────────────────────────────────────
+
+    def _inicializar_screensaver(self):
+        self._ss_cap       = None   # cv2.VideoCapture
+        self._ss_delay     = 33     # ms entre frames (~30 fps)
+        self._ss_after_id  = None
+        self._ss_running   = False
+        self._ss_photo     = None   # referência para evitar GC
+
+        self._screensaver = ctk.CTkFrame(self, fg_color="#000000", corner_radius=0)
+        self._ss_lbl = tk.Label(self._screensaver, bg="#000000", bd=0, cursor="hand2")
+        self._ss_lbl.place(relx=0.5, rely=0.5, anchor="center")
+        self._screensaver.bind("<Button-1>", lambda _: self._fechar_screensaver())
+        self._ss_lbl.bind("<Button-1>",      lambda _: self._fechar_screensaver())
+
+    def _mostrar_screensaver(self):
+        if not VIDEO_PATH.exists():
+            return  # arquivo ainda não colocado na pasta assets/
+        try:
+            import cv2
+        except ImportError:
+            return  # opencv-python não instalado
+
+        if not hasattr(self, '_screensaver'):
+            self._inicializar_screensaver()
+
+        # Abre (ou reabre) o vídeo
+        if self._ss_cap is not None:
+            self._ss_cap.release()
+        self._ss_cap = cv2.VideoCapture(str(VIDEO_PATH))
+
+        fps = self._ss_cap.get(cv2.CAP_PROP_FPS)
+        self._ss_delay = max(15, int(1000 / fps)) if fps > 0 else 33
+
+        self._ss_running = True
+        self._screensaver.place(x=0, y=0, relwidth=1, relheight=1)
+        self._screensaver.lift()
+        if hasattr(self, 'btn_fullscreen'):
+            self.btn_fullscreen.lift()
+        self._animar_screensaver()
+
+    def _animar_screensaver(self):
+        if not self._ss_running:
+            return
+        if not hasattr(self, '_screensaver') or not self._screensaver.winfo_exists():
+            return
+
+        import cv2
+        ret, frame = self._ss_cap.read()
+        if not ret:
+            # Fim do vídeo — reinicia em loop
+            self._ss_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ret, frame = self._ss_cap.read()
+            if not ret:
+                return
+
+        # Redimensiona para caber na janela (preserva proporção)
+        w, h = self.winfo_width(), self.winfo_height()
+        if w > 1 and h > 1:
+            fh, fw = frame.shape[:2]
+            ratio  = min(w / fw, h / fh)
+            nw, nh = max(1, int(fw * ratio)), max(1, int(fh * ratio))
+            frame  = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
+
+        # BGR → RGB → PhotoImage
+        rgb   = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        img   = Image.fromarray(rgb)
+        photo = ImageTk.PhotoImage(img)
+        self._ss_lbl.configure(image=photo)
+        self._ss_photo = photo  # previne garbage collection
+
+        self._ss_after_id = self.after(self._ss_delay, self._animar_screensaver)
+
+    def _fechar_screensaver(self):
+        self._ss_running = False
+        if self._ss_after_id is not None:
+            try:
+                self.after_cancel(self._ss_after_id)
+            except Exception:
+                pass
+            self._ss_after_id = None
+        if hasattr(self, '_ss_cap') and self._ss_cap is not None:
+            self._ss_cap.release()
+            self._ss_cap = None
+        if hasattr(self, '_screensaver') and self._screensaver.winfo_exists():
+            self._screensaver.place_forget()
+
+    # ── Pedido ──────────────────────────────────────────────────────────────────
+
     def _pedido_confirmado(self, data):
         self._limpar_carrinho()
         self._modal_confirmado(data["numero"], data["valor_total"])
@@ -601,6 +692,7 @@ class AppCliente(ctk.CTk):
                 modal.grab_release()
                 modal.destroy()
             self._carregar_produtos()
+            self.after(800, self._mostrar_screensaver)
 
         # ── Conteúdo (apenas widgets nativos tk para garantir renderização) ────
         tk.Frame(modal, bg=VERDE, height=12).pack(fill="x")

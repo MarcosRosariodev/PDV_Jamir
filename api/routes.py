@@ -13,7 +13,7 @@ import pathlib
 import sys, os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from database.db import get_db, Categoria, Produto, Pedido, PedidoItem
+from database.db import get_db, Categoria, Produto, Pedido, PedidoItem, Cortesia
 from services.printer import imprimir_cupom
 
 router = APIRouter()
@@ -50,6 +50,10 @@ class ProdutoUpdate(BaseModel):
     ativo: int | None = None
     estoque: int | None = None
     categoria_id: int | None = None
+
+class CortesiaCreate(BaseModel):
+    produto_id: int
+    observacao: str = ""
 
 
 # ── Categorias ───────────────────────────────────────────────────────────────
@@ -110,7 +114,11 @@ async def upload_imagem_produto(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    images_dir = pathlib.Path(__file__).parent.parent / "images"
+    import sys as _sys
+    if getattr(_sys, "frozen", False):
+        images_dir = pathlib.Path(_sys.executable).parent / "images"
+    else:
+        images_dir = pathlib.Path(__file__).parent.parent / "images"
     images_dir.mkdir(exist_ok=True)
 
     ext = pathlib.Path(file.filename or "img.jpg").suffix.lower()
@@ -272,6 +280,47 @@ def _pedido_dict(p: Pedido) -> dict:
             for i in p.itens
         ],
     }
+
+
+# ── Cortesias ────────────────────────────────────────────────────────────────
+
+@router.post("/cortesias")
+def registrar_cortesia(dados: CortesiaCreate, db: Session = Depends(get_db)):
+    produto = db.query(Produto).filter(Produto.id == dados.produto_id).first()
+    if not produto:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+    if (produto.estoque or 0) < 1:
+        raise HTTPException(status_code=400, detail=f"Sem estoque para '{produto.nome}'")
+
+    produto.estoque = (produto.estoque or 0) - 1
+    cortesia = Cortesia(
+        produto_id=dados.produto_id,
+        quantidade=1,
+        observacao=dados.observacao,
+    )
+    db.add(cortesia)
+    db.commit()
+    return {
+        "id": cortesia.id,
+        "produto": produto.nome,
+        "estoque_restante": produto.estoque,
+        "mensagem": "Cortesia registrada",
+    }
+
+
+@router.get("/cortesias")
+def listar_cortesias(db: Session = Depends(get_db)):
+    cortesias = db.query(Cortesia).order_by(Cortesia.data_hora.desc()).limit(200).all()
+    return [
+        {
+            "id": c.id,
+            "produto": c.produto.nome,
+            "quantidade": c.quantidade,
+            "observacao": c.observacao,
+            "data_hora": str(c.data_hora),
+        }
+        for c in cortesias
+    ]
 
 
 # ── Relatórios ────────────────────────────────────────────────────────────────

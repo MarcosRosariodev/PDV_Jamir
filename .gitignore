@@ -7,3 +7,10 @@ venv/
 .venv/
 *.egg-info/
 .env
+
+# PyInstaller
+build/
+dist/
+
+# Vídeo screensaver (arquivo grande — colocar manualmente no cliente)
+assets/*.mp4

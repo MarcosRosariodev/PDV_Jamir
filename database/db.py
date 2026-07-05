@@ -7,8 +7,16 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, 
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from datetime import datetime
 import os
+import os
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import sys
+
+if getattr(sys, "frozen", False):
+    # Executável PyInstaller — banco fica junto ao .exe
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 DATABASE_URL = f"sqlite:///{os.path.join(BASE_DIR, 'pdv_jamir.db')}"
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
@@ -67,9 +75,21 @@ class PedidoItem(Base):
     produto = relationship("Produto", back_populates="itens")
 
 
+class Cortesia(Base):
+    __tablename__ = "cortesia"
+
+    id         = Column(Integer, primary_key=True)
+    produto_id = Column(Integer, ForeignKey("produto.id"))
+    quantidade = Column(Integer, default=1)
+    observacao = Column(String(200), default="")
+    data_hora  = Column(DateTime, default=datetime.now)
+
+    produto = relationship("Produto")
+
+
 def criar_tabelas():
     Base.metadata.create_all(bind=engine)
-    # Migração: adiciona coluna estoque se ainda não existir
+    # Migrações: adiciona colunas que podem não existir em bancos antigos
     with engine.connect() as conn:
         cols = [row[1] for row in conn.execute(text("PRAGMA table_info(produto)"))]
         if "estoque" not in cols:

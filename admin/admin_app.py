@@ -105,6 +105,7 @@ class AdminApp(ctk.CTk):
             ("produtos",   "  🍦  Produtos"),
             ("categorias", "  🏷️  Categorias"),
             ("relatorios", "  📈  Relatórios"),
+            ("cortesias",  "  🎁  Cortesias"),
         ]
         self._nav_btns: dict[str, ctk.CTkButton] = {}
         for row, (key, label) in enumerate(nav_items, start=1):
@@ -157,6 +158,7 @@ class AdminApp(ctk.CTk):
             "produtos":   self._view_produtos,
             "categorias": self._view_categorias,
             "relatorios": self._view_relatorios,
+            "cortesias":  self._view_cortesias,
         }[key]()
 
     def _titulo(self, texto: str):
@@ -402,6 +404,10 @@ class AdminApp(ctk.CTk):
         ctk.CTkButton(frm_top, text="↻ Atualizar", width=110, height=36,
                       corner_radius=8, fg_color="gray40", hover_color="gray30",
                       command=self._view_produtos,
+                      ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(frm_top, text="🎁 Registrar Cortesia", width=180, height=36,
+                      corner_radius=8, fg_color="#6A1B9A", hover_color="#4A148C",
+                      command=lambda: self._dlg_cortesia(tree),
                       ).pack(side="left")
 
         cols_cfg = [
@@ -1025,6 +1031,116 @@ class AdminApp(ctk.CTk):
                 ).pack(pady=(4, 20))
 
         carregar()   # carrega "Tudo" ao abrir
+
+
+    # ── Cortesias ─────────────────────────────────────────────────────────────
+
+    def _dlg_cortesia(self, tree: "ttk.Treeview"):
+        sel = tree.selection()
+        if not sel:
+            messagebox.showwarning("Aviso", "Selecione um produto na lista antes de registrar a cortesia.")
+            return
+        vals    = tree.item(sel[0])["values"]
+        prod_id = int(vals[0])
+        nome    = vals[1]
+        estoque = int(vals[4]) if vals[4] != "" else 0
+
+        if estoque < 1:
+            messagebox.showerror("Estoque zerado", f"'{nome}' está sem estoque.")
+            return
+
+        dlg = ctk.CTkToplevel(self)
+        dlg.title("Registrar Cortesia")
+        dlg.geometry("420x260")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+        dlg.after(100, dlg.lift)
+        dlg.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(dlg, text="🎁  Registrar Cortesia",
+                     font=ctk.CTkFont(size=16, weight="bold"),
+                     ).grid(row=0, column=0, pady=(22, 4))
+
+        ctk.CTkLabel(dlg, text=f"Produto:  {nome}",
+                     font=ctk.CTkFont(size=13),
+                     ).grid(row=1, column=0, pady=(4, 2))
+
+        ctk.CTkLabel(dlg, text=f"Estoque atual:  {estoque}  →  {estoque - 1} após cortesia",
+                     text_color="#FF9800", font=ctk.CTkFont(size=11),
+                     ).grid(row=2, column=0, pady=(0, 14))
+
+        var_obs = ctk.StringVar()
+        ctk.CTkLabel(dlg, text="Observação (opcional):",
+                     font=ctk.CTkFont(size=11), text_color="gray55",
+                     ).grid(row=3, column=0, padx=30, sticky="w")
+        ctk.CTkEntry(dlg, textvariable=var_obs, width=360, height=34,
+                     placeholder_text="Ex: brinde ao cliente João"
+                     ).grid(row=4, column=0, padx=30, pady=(4, 18))
+
+        def confirmar():
+            def _post():
+                try:
+                    api_post("/cortesias", {
+                        "produto_id": prod_id,
+                        "observacao": var_obs.get().strip(),
+                    })
+                    self.after(0, dlg.destroy)
+                    self.after(0, self._view_produtos)
+                    self.after(0, lambda: messagebox.showinfo(
+                        "Cortesia registrada",
+                        f"1x {nome} registrado como cortesia.\nEstoque: {estoque - 1}",
+                    ))
+                except Exception as e:
+                    self.after(0, lambda: messagebox.showerror("Erro", str(e)))
+            threading.Thread(target=_post, daemon=True).start()
+
+        ctk.CTkButton(dlg, text="✔  Confirmar Cortesia", height=40, corner_radius=8,
+                      fg_color="#6A1B9A", hover_color="#4A148C",
+                      command=confirmar,
+                      ).grid(row=5, column=0, padx=30, sticky="ew")
+
+    def _view_cortesias(self):
+        self._titulo("Cortesias Registradas")
+        self.main.grid_rowconfigure(2, weight=1)
+
+        frm_top = ctk.CTkFrame(self.main, fg_color="transparent")
+        frm_top.grid(row=1, column=0, padx=24, pady=(0, 4), sticky="nw")
+        ctk.CTkButton(frm_top, text="↻ Atualizar", width=110, height=36,
+                      corner_radius=8, fg_color="gray40", hover_color="gray30",
+                      command=self._view_cortesias,
+                      ).pack(side="left")
+
+        cols_cfg = [
+            ("id",        "ID",         55,  "center"),
+            ("data_hora", "Data/Hora",  155, "center"),
+            ("produto",   "Produto",    200, "w"),
+            ("quantidade","Qtd",         60, "center"),
+            ("observacao","Observação",  480, "w"),
+        ]
+        frm_tree, tree = self._tree_frame(cols_cfg)
+        frm_tree.grid(row=2, column=0, padx=24, pady=4, sticky="nsew")
+
+        def preencher(lista: list):
+            tree.delete(*tree.get_children())
+            for c in lista:
+                tree.insert("", "end", values=(
+                    c["id"],
+                    c["data_hora"][:16],
+                    c["produto"],
+                    c["quantidade"],
+                    c["observacao"] or "—",
+                ))
+
+        def carregar():
+            def _get():
+                try:
+                    dados = api_get("/cortesias")
+                    self.after(0, lambda: preencher(dados))
+                except Exception as e:
+                    self.after(0, lambda: messagebox.showerror("Erro", str(e)))
+            threading.Thread(target=_get, daemon=True).start()
+
+        carregar()
 
 
 if __name__ == "__main__":

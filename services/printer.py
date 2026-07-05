@@ -1,87 +1,123 @@
 """
 services/printer.py
-Serviço de impressão — Bematech MP-4200 TH via COM5 (USB-Serial / ESC/POS)
+Impressão via spooler do Windows (win32print) com dados RAW ESC/POS.
+Funciona com qualquer impressora instalada pelo driver oficial da Bematech.
 """
 
 from datetime import datetime
+import os
 
-try:
-    from escpos.printer import Serial
-    ESCPOS_DISPONIVEL = True
-except ImportError:
-    ESCPOS_DISPONIVEL = False
-    print("[IMPRESSORA] python-escpos não instalado. Modo fallback ativo.")
+# Nome da impressora exatamente como aparece em "Dispositivos e Impressoras".
+# Pode ser sobrescrito pela variável de ambiente PDV_PRINTER_NAME.
+PRINTER_NAME = os.environ.get("PDV_PRINTER_NAME", "MP-4200 TH")
 
-# Bematech MP-4200 TH — conectada em COM5 (USB-Serial)
-PRINTER_PORT     = "COM5"
-PRINTER_BAUDRATE = 9600   # padrão Bematech; tente 115200 se não imprimir
-LARGURA          = 40     # colunas (papel 80 mm ≈ 40-48 chars; 57 mm ≈ 32)
+LARGURA = 40   # colunas em tamanho normal (papel 80 mm)
 
-NOME_ESTABELECIMENTO = "DinDin Jamir"
-ENDERECO             = "Rua das Flores, 123 — Fortaleza/CE"
-TELEFONE             = "(85) 9 9999-9999"
+NOME_ESTABELECIMENTO = "DinDin Show"
+ENDERECO             = "Rua Dinamarca, 190 - Parangaba"
+TELEFONE             = "(85) 996826-960"
+VENDAS               = "Vendas: Varejo e atacado"
+
+# ── Comandos ESC/POS ──────────────────────────────────────────────────────────
+
+ESC = b'\x1b'
+GS  = b'\x1d'
+
+_INIT         = ESC + b'\x40'           # reinicializa impressora
+_CODEPAGE_860 = ESC + b'\x74\x06'       # PC860 — Portugues (suporte a caracteres acentuados)
+_ALIGN_LEFT   = ESC + b'\x61\x00'
+_ALIGN_CENTER = ESC + b'\x61\x01'
+_BOLD_ON      = ESC + b'\x45\x01'
+_BOLD_OFF     = ESC + b'\x45\x00'
+_SIZE_DOUBLE  = GS  + b'\x21\x11'      # largura + altura duplas
+_SIZE_NORMAL  = GS  + b'\x21\x00'
+_CUT          = GS  + b'\x56\x41\x05'  # corte parcial com avanco de 5 linhas
+_LF           = b'\x0a'
 
 
-def _conectar():
-    if not ESCPOS_DISPONIVEL:
-        return None
-    try:
-        p = Serial(
-            devfile=PRINTER_PORT,
-            baudrate=PRINTER_BAUDRATE,
-            bytesize=8,
-            parity="N",
-            stopbits=1,
-            timeout=1,
-            dsrdtr=False,
-        )
-        return p
-    except Exception as e:
-        print(f"[IMPRESSORA] Falha ao conectar em {PRINTER_PORT}: {e}")
-        return None
+def _t(texto: str) -> bytes:
+    """Converte string para bytes CP860 + line feed."""
+    return texto.encode("cp860", errors="replace") + _LF
 
+
+# ── API publica ───────────────────────────────────────────────────────────────
 
 def imprimir_cupom(pedido: dict):
-    linhas = _montar_cupom(pedido)
-    impressora = _conectar()
-
-    if impressora:
-        try:
-            impressora.set(align="center", bold=True, width=2, height=2)
-            impressora.text(NOME_ESTABELECIMENTO + "\n")
-            impressora.set(align="center", bold=False, width=1, height=1)
-            impressora.text(ENDERECO + "\n")
-            impressora.text(TELEFONE + "\n")
-            impressora.text("-" * LARGURA + "\n")
-            impressora.set(align="left")
-            for linha in linhas:
-                impressora.text(linha + "\n")
-            impressora.set(align="center")
-            impressora.text("\nObrigado pela preferência!\n\n\n")
-            impressora.cut()
-            print(f"[IMPRESSORA] Pedido #{pedido.get('numero')} impresso em {PRINTER_PORT}.")
-        except Exception as e:
-            print(f"[IMPRESSORA] Erro ao imprimir: {e}")
-        finally:
-            try:
-                impressora.close()
-            except Exception:
-                pass
+    """Monta e envia o cupom para a impressora."""
+    raw = _montar_raw(pedido)
+    ok  = _enviar_raw(raw)
+    if ok:
+        print(f"[IMPRESSORA] Pedido #{pedido.get('numero')} impresso em '{PRINTER_NAME}'.")
     else:
-        _fallback_console(linhas)
+        _fallback_console(_montar_linhas(pedido))
 
 
-def _fallback_console(linhas: list):
-    print("\n" + "=" * LARGURA)
-    print(NOME_ESTABELECIMENTO.center(LARGURA))
-    print(ENDERECO.center(LARGURA))
-    print("=" * LARGURA)
+def listar_impressoras() -> list[str]:
+    """Retorna os nomes das impressoras instaladas no Windows."""
+    try:
+        import win32print
+        flags = win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
+        return [p[2] for p in win32print.EnumPrinters(flags)]
+    except Exception as e:
+        print(f"[IMPRESSORA] Nao foi possivel listar impressoras: {e}")
+        return []
+
+
+# ── Internos ──────────────────────────────────────────────────────────────────
+
+def _enviar_raw(dados: bytes) -> bool:
+    """Envia bytes RAW para o spooler do Windows."""
+    try:
+        import win32print
+        h = win32print.OpenPrinter(PRINTER_NAME)
+        try:
+            win32print.StartDocPrinter(h, 1, ("Cupom PDV", None, "RAW"))
+            try:
+                win32print.StartPagePrinter(h)
+                win32print.WritePrinter(h, dados)
+                win32print.EndPagePrinter(h)
+            finally:
+                win32print.EndDocPrinter(h)
+        finally:
+            win32print.ClosePrinter(h)
+        return True
+    except Exception as e:
+        print(f"[IMPRESSORA] Erro ao imprimir: {e}")
+        return False
+
+
+def _montar_raw(pedido: dict) -> bytes:
+    """Monta o buffer ESC/POS completo do cupom."""
+    linhas = _montar_linhas(pedido)
+    buf = bytearray()
+
+    # Inicializacao
+    buf += _INIT + _CODEPAGE_860
+
+    # Cabecalho centralizado em tamanho duplo
+    buf += _ALIGN_CENTER + _SIZE_DOUBLE + _BOLD_ON
+    buf += _t(NOME_ESTABELECIMENTO)
+    buf += _SIZE_NORMAL + _BOLD_OFF
+    buf += _t(ENDERECO)
+    buf += _t(TELEFONE)
+    buf += _t(VENDAS)
+    buf += _t("-" * LARGURA)
+
+    # Itens alinhados a esquerda
+    buf += _ALIGN_LEFT
     for linha in linhas:
-        print(linha)
-    print("=" * LARGURA + "\n")
+        buf += _t(linha)
+
+    # Rodape
+    buf += _ALIGN_CENTER + _LF
+    buf += _t("Obrigado pela preferencia!")
+    buf += _CUT
+
+    return bytes(buf)
 
 
-def _montar_cupom(pedido: dict) -> list[str]:
+def _montar_linhas(pedido: dict) -> list[str]:
+    """Retorna as linhas de texto do cupom (sem formatacao ESC/POS)."""
     numero = pedido.get("numero", pedido.get("id", "?"))
     agora  = datetime.now().strftime("%d/%m/%Y %H:%M")
 
@@ -91,12 +127,11 @@ def _montar_cupom(pedido: dict) -> list[str]:
     ]
 
     for item in pedido.get("itens", []):
-        nome = item["produto"][:22]
-        qtd  = item["quantidade"]
-        vlr  = item["valor"]
-        sub  = f"R$ {qtd * vlr:.2f}"
+        nome  = item["produto"][:22]
+        qtd   = item["quantidade"]
+        vlr   = item["valor"]
+        sub   = f"R$ {qtd * vlr:.2f}"
         linha = f"{qtd}x {nome}"
-        # alinha o subtotal à direita
         espacos = LARGURA - len(linha) - len(sub)
         linhas.append(linha + " " * max(1, espacos) + sub)
 
@@ -113,3 +148,13 @@ def _montar_cupom(pedido: dict) -> list[str]:
         linhas.append(f"Pagamento: {pagto.upper()}".center(LARGURA))
 
     return linhas
+
+
+def _fallback_console(linhas: list):
+    print("\n" + "=" * LARGURA)
+    print(NOME_ESTABELECIMENTO.center(LARGURA))
+    print(ENDERECO.center(LARGURA))
+    print("=" * LARGURA)
+    for linha in linhas:
+        print(linha)
+    print("=" * LARGURA + "\n")
