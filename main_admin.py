@@ -27,7 +27,7 @@ logging.info("=== PDV Admin iniciando ===")
 def _start_server():
     try:
         import uvicorn
-        uvicorn.run("api.server:app", host="127.0.0.1", port=8000, log_level="error")
+        uvicorn.run("api.server:app", host="127.0.0.1", port=8000, log_level="error", log_config=None)
     except Exception:
         logging.critical("Falha ao iniciar servidor:\n" + traceback.format_exc())
 

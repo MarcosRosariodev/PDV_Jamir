@@ -28,7 +28,8 @@ logging.info("=== PDV Totem iniciando ===")
 def _start_server():
     try:
         import uvicorn
-        uvicorn.run("api.server:app", host="127.0.0.1", port=8000, log_level="error")
+        # log_config=None evita o erro "isatty on NoneType" em apps sem console (windowed)
+        uvicorn.run("api.server:app", host="127.0.0.1", port=8000, log_level="error", log_config=None)
     except Exception:
         logging.critical("Falha ao iniciar servidor:\n" + traceback.format_exc())
 
