@@ -61,5 +61,5 @@ Name: "{userstartup}\PDV Totem";         Filename: "{app}\PDV_Totem\PDV_Totem.ex
 Filename: "{app}\PDV_Totem\PDV_Totem.exe"; WorkingDir: "{app}\PDV_Totem"; Description: "Abrir o Totem agora"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
-; Remove o banco de dados ao desinstalar (opcional — comente se quiser manter os dados)
-; Type: files; Name: "{app}\pdv_jamir.db"
+; Dados ficam em ProgramData — descomente abaixo apenas se quiser apagar tudo ao desinstalar
+; Type: filesandordirs; Name: "{commonappdata}\PDV_DinDin_Show"

@@ -7,13 +7,16 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, 
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from datetime import datetime
 import os
-import os
-
 import sys
 
 if getattr(sys, "frozen", False):
-    # Executável PyInstaller — banco fica junto ao .exe
-    BASE_DIR = os.path.dirname(sys.executable)
+    # Executável PyInstaller: dados em ProgramData — gravável por todos os usuários
+    # e compartilhado entre PDV_Totem.exe e PDV_Admin.exe independente de onde instalados.
+    BASE_DIR = os.path.join(
+        os.environ.get("PROGRAMDATA", r"C:\ProgramData"),
+        "PDV_DinDin_Show",
+    )
+    os.makedirs(BASE_DIR, exist_ok=True)
 else:
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

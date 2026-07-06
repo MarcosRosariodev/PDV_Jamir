@@ -114,12 +114,12 @@ async def upload_imagem_produto(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    import sys as _sys
+    import sys as _sys, os as _os
     if getattr(_sys, "frozen", False):
-        images_dir = pathlib.Path(_sys.executable).parent / "images"
+        images_dir = pathlib.Path(_os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "PDV_DinDin_Show" / "images"
     else:
         images_dir = pathlib.Path(__file__).parent.parent / "images"
-    images_dir.mkdir(exist_ok=True)
+    images_dir.mkdir(parents=True, exist_ok=True)
 
     ext = pathlib.Path(file.filename or "img.jpg").suffix.lower()
     if ext not in {".jpg", ".jpeg", ".png", ".webp"}:

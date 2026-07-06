@@ -13,8 +13,11 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.routes import router
 
-IMAGES_DIR = pathlib.Path(__file__).parent.parent / "images"
-IMAGES_DIR.mkdir(exist_ok=True)
+if getattr(sys, "frozen", False):
+    IMAGES_DIR = pathlib.Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "PDV_DinDin_Show" / "images"
+else:
+    IMAGES_DIR = pathlib.Path(__file__).parent.parent / "images"
+IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @asynccontextmanager
