@@ -560,11 +560,97 @@ class AppCliente(ctk.CTk):
         if not self.carrinho:
             messagebox.showwarning("Carrinho vazio", "Adicione itens antes de confirmar.")
             return
+        self._modal_nome(self._enviar_pedido)
 
+    def _modal_nome(self, on_confirmar):
+        """Modal touchscreen para capturar o nome do cliente."""
+        CW, CH = 540, 530
+
+        modal = tk.Toplevel(self)
+        modal.transient(self)
+        modal.title("")
+        modal.resizable(False, False)
+        modal.configure(bg="#FFFFFF")
+        modal.attributes("-topmost", True)
+
+        nome_var = tk.StringVar()
+
+        def _ok():
+            nome = nome_var.get().strip()
+            if modal.winfo_exists():
+                modal.grab_release()
+                modal.destroy()
+            on_confirmar(nome)
+
+        def _pular():
+            if modal.winfo_exists():
+                modal.grab_release()
+                modal.destroy()
+            on_confirmar("")
+
+        def _letra(c):
+            nome_var.set(nome_var.get() + c)
+
+        def _apagar():
+            nome_var.set(nome_var.get()[:-1])
+
+        tk.Frame(modal, bg=COR_HEADER, height=10).pack(fill="x")
+        tk.Label(modal, text="Confirme seu nome", fg=COR_HEADER, bg="#FFFFFF",
+                 font=("Segoe UI", 18, "bold")).pack(pady=(18, 2))
+        tk.Label(modal, text="Toque nas letras ou use o teclado",
+                 fg=COR_TEXTO_LEVE, bg="#FFFFFF", font=("Segoe UI", 11)).pack()
+
+        entry = tk.Entry(modal, textvariable=nome_var, font=("Segoe UI", 22),
+                         relief="solid", bd=2, fg=COR_TEXTO, width=18,
+                         justify="center", insertbackground=COR_HEADER)
+        entry.pack(pady=(14, 10), padx=30, ipady=6)
+        entry.focus_set()
+
+        frm_kb = tk.Frame(modal, bg="#FFFFFF")
+        frm_kb.pack(padx=18)
+        _BTN = dict(font=("Segoe UI", 13, "bold"), relief="raised",
+                    bg="#EEF1F5", fg=COR_TEXTO, activebackground=COR_AMARELO,
+                    bd=1, cursor="hand2")
+        for row_txt in ("QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"):
+            frm_r = tk.Frame(frm_kb, bg="#FFFFFF")
+            frm_r.pack(pady=2)
+            for c in row_txt:
+                tk.Button(frm_r, text=c, width=3, height=1,
+                          command=lambda ch=c: _letra(ch), **_BTN
+                          ).pack(side="left", padx=2)
+
+        frm_extra = tk.Frame(frm_kb, bg="#FFFFFF")
+        frm_extra.pack(pady=4)
+        tk.Button(frm_extra, text="ESPACO", width=14, height=1,
+                  command=lambda: _letra(" "), **_BTN).pack(side="left", padx=3)
+        tk.Button(frm_extra, text="<", width=4, height=1,
+                  command=_apagar,
+                  **{**_BTN, "activebackground": "#FFCCCC"}).pack(side="left", padx=3)
+
+        frm_btns = tk.Frame(modal, bg="#FFFFFF")
+        frm_btns.pack(fill="x", padx=20, pady=(10, 18))
+        tk.Button(frm_btns, text="Pular", bg="#EEF1F5", fg=COR_TEXTO,
+                  font=("Segoe UI", 12), relief="flat", padx=20, pady=10,
+                  cursor="hand2", command=_pular).pack(side="left", expand=True, fill="x", padx=(0, 6))
+        tk.Button(frm_btns, text="Confirmar", bg=COR_VERDE, fg="white",
+                  font=("Segoe UI", 13, "bold"), relief="flat", padx=20, pady=10,
+                  cursor="hand2", command=_ok).pack(side="left", expand=True, fill="x")
+
+        modal.bind("<Return>", lambda e: _ok())
+        modal.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width()  - CW) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - CH) // 2
+        modal.geometry(f"{CW}x{CH}+{x}+{y}")
+        modal.lift()
+        modal.focus_force()
+        modal.grab_set()
+
+    def _enviar_pedido(self, nome_cliente: str):
         payload = {
             "itens": [{"produto_id": pid, "quantidade": v["qtd"]}
                       for pid, v in self.carrinho.items()],
             "forma_pagamento": self.var_pagamento.get(),
+            "nome_cliente": nome_cliente,
         }
 
         def enviar():
@@ -572,7 +658,7 @@ class AppCliente(ctk.CTk):
                 r = httpx.post(f"{API_BASE}/pedidos", json=payload, timeout=10)
                 data = r.json()
                 if r.status_code == 200:
-                    self.after(0, lambda: self._pedido_confirmado(data))
+                    self.after(0, lambda: self._pedido_confirmado(data, nome_cliente))
                 else:
                     self.after(0, lambda: messagebox.showerror("Erro", str(data)))
             except Exception as e:
@@ -669,11 +755,11 @@ class AppCliente(ctk.CTk):
 
     # ── Pedido ──────────────────────────────────────────────────────────────────
 
-    def _pedido_confirmado(self, data):
+    def _pedido_confirmado(self, data, nome_cliente: str = ""):
         self._limpar_carrinho()
-        self._modal_confirmado(data["numero"], data["valor_total"])
+        self._modal_confirmado(data["numero"], data["valor_total"], nome_cliente)
 
-    def _modal_confirmado(self, numero: int, total: float):
+    def _modal_confirmado(self, numero: int, total: float, nome_cliente: str = ""):
         VERDE = "#2E7D32"
         TEMPO = 15
         CW, CH = 480, 462
@@ -708,10 +794,14 @@ class AppCliente(ctk.CTk):
         tk.Label(frm_num, text=f"Pedido  #{numero}", fg=COR_LARANJA, bg="#FFF3E0",
                  font=("Segoe UI", 26, "bold")).pack()
 
-        tk.Label(modal, text=f"Total: {_fmt_brl(total)}", fg=COR_TEXTO_LEVE, bg="#FFFFFF",
-                 font=("Segoe UI", 13)).pack(pady=(8, 0))
+        if nome_cliente:
+            tk.Label(modal, text=f"Olá, {nome_cliente}!", fg=COR_HEADER, bg="#FFFFFF",
+                     font=("Segoe UI", 14, "bold")).pack(pady=(8, 0))
 
-        tk.Label(modal, text="🍦  Aguarde o preparo!", fg=COR_TEXTO, bg="#FFFFFF",
+        tk.Label(modal, text=f"Total: {_fmt_brl(total)}", fg=COR_TEXTO_LEVE, bg="#FFFFFF",
+                 font=("Segoe UI", 13)).pack(pady=(6, 0))
+
+        tk.Label(modal, text="Aguarde o preparo!", fg=COR_TEXTO, bg="#FFFFFF",
                  font=("Segoe UI", 13)).pack(pady=(6, 0))
 
         # Barra de progresso com Canvas nativo

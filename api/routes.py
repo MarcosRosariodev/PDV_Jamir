@@ -31,6 +31,7 @@ class ItemSchema(BaseModel):
 class PedidoCreate(BaseModel):
     itens: list[ItemSchema]
     forma_pagamento: str = "dinheiro"
+    nome_cliente: str = ""
 
 class PedidoStatusUpdate(BaseModel):
     status: str
@@ -191,6 +192,7 @@ def criar_pedido(dados: PedidoCreate, db: Session = Depends(get_db)):
     pedido = Pedido(
         valor_total=round(total, 2),
         forma_pagamento=dados.forma_pagamento,
+        nome_cliente=dados.nome_cliente,
     )
     db.add(pedido)
     db.flush()
@@ -275,6 +277,7 @@ def _pedido_dict(p: Pedido) -> dict:
         "valor_total": p.valor_total,
         "data_hora": str(p.data_hora),
         "forma_pagamento": p.forma_pagamento,
+        "nome_cliente": getattr(p, "nome_cliente", "") or "",
         "itens": [
             {"produto": i.produto.nome, "quantidade": i.quantidade, "valor": i.valor}
             for i in p.itens

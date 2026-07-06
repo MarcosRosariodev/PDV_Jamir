@@ -61,6 +61,7 @@ class Pedido(Base):
     valor_total     = Column(Float, default=0.0)
     data_hora       = Column(DateTime, default=datetime.now)
     forma_pagamento = Column(String(30), default="dinheiro")
+    nome_cliente    = Column(String(100), default="")
 
     itens = relationship("PedidoItem", back_populates="pedido")
 
@@ -97,6 +98,10 @@ def criar_tabelas():
         cols = [row[1] for row in conn.execute(text("PRAGMA table_info(produto)"))]
         if "estoque" not in cols:
             conn.execute(text("ALTER TABLE produto ADD COLUMN estoque INTEGER DEFAULT 0"))
+            conn.commit()
+        cols_pedido = [row[1] for row in conn.execute(text("PRAGMA table_info(pedido)"))]
+        if "nome_cliente" not in cols_pedido:
+            conn.execute(text("ALTER TABLE pedido ADD COLUMN nome_cliente VARCHAR(100) DEFAULT ''"))
             conn.commit()
 
 

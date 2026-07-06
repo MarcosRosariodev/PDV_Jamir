@@ -103,6 +103,13 @@ def _montar_raw(pedido: dict) -> bytes:
     buf += _t(VENDAS)
     buf += _t("-" * LARGURA)
 
+    # Nome do cliente (se informado), centralizado e em negrito
+    nome_cliente = (pedido.get("nome_cliente") or "").strip()
+    if nome_cliente:
+        buf += _ALIGN_CENTER + _BOLD_ON
+        buf += _t(f"Cliente: {nome_cliente}")
+        buf += _BOLD_OFF
+
     # Itens alinhados a esquerda
     buf += _ALIGN_LEFT
     for linha in linhas:
@@ -118,13 +125,16 @@ def _montar_raw(pedido: dict) -> bytes:
 
 def _montar_linhas(pedido: dict) -> list[str]:
     """Retorna as linhas de texto do cupom (sem formatacao ESC/POS)."""
-    numero = pedido.get("numero", pedido.get("id", "?"))
-    agora  = datetime.now().strftime("%d/%m/%Y %H:%M")
+    numero       = pedido.get("numero", pedido.get("id", "?"))
+    nome_cliente = (pedido.get("nome_cliente") or "").strip()
+    agora        = datetime.now().strftime("%d/%m/%Y %H:%M")
 
     linhas: list[str] = [
         f"PEDIDO #{numero}".center(LARGURA),
-        "",
     ]
+    if nome_cliente:
+        linhas.append(f"Cliente: {nome_cliente}".center(LARGURA))
+    linhas.append("")
 
     for item in pedido.get("itens", []):
         nome  = item["produto"][:22]
