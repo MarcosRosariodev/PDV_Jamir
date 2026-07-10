@@ -36,6 +36,10 @@ COR_FAIXA_ESG    = "#E25C73"
 COR_PGTO_INATIVO = "#EEF1F5"
 COR_BORDA_CARD   = "#ECEDF0"
 
+# fotos dos sabores em modo retrato (mais alta que larga)
+FOTO_LARGURA = 130
+FOTO_ALTURA  = 180
+
 SWATCH_PALETA = [
     "#E0395B", "#7B3FA0", "#E8D7A0", "#2E86DE", "#16A085",
     "#F39C12", "#D35400", "#8E44AD", "#27AE60", "#C0392B",
@@ -64,13 +68,33 @@ class AppCliente(ctk.CTk):
         # iniciais opcionais via PDV_TOTEM_X / PDV_TOTEM_Y / PDV_TOTEM_W / PDV_TOTEM_H.
         mon_x = os.environ.get("PDV_TOTEM_X")
         mon_y = os.environ.get("PDV_TOTEM_Y")
-        largura = os.environ.get("PDV_TOTEM_W", "760")
-        altura  = os.environ.get("PDV_TOTEM_H", "1000")
-        geo = f"{largura}x{altura}"
-        if mon_x is not None or mon_y is not None:
-            geo += f"+{int(mon_x or 0)}+{int(mon_y or 0)}"
+        largura = int(os.environ.get("PDV_TOTEM_W", "760"))
+        altura  = int(os.environ.get("PDV_TOTEM_H", "1000"))
+
+        monitor_alvo = None
+        if mon_x is None and mon_y is None:
+            # sem posição explícita — abre na tela onde o executável foi
+            # iniciado (monitor onde o cursor está no momento do lançamento).
+            monitor_alvo = self._monitor_do_lancamento()
+
+        if monitor_alvo is not None:
+            m_left, m_top, m_right, m_bottom = monitor_alvo
+            largura = min(largura, (m_right - m_left) - 20)
+            altura  = min(altura, (m_bottom - m_top) - 60)
+            geo = f"{largura}x{altura}+{m_left + 10}+{m_top + 10}"
+        else:
+            # nunca abrir maior que a tela física — evita que o painel do
+            # carrinho (ancorado embaixo) fique fora da área visível.
+            largura = min(largura, self.winfo_screenwidth() - 20)
+            altura  = min(altura, self.winfo_screenheight() - 60)
+            geo = f"{largura}x{altura}"
+            if mon_x is not None or mon_y is not None:
+                geo += f"+{int(mon_x or 0)}+{int(mon_y or 0)}"
         self.geometry(geo)
         self.resizable(True, True)
+        # altura mínima garante que o painel do carrinho nunca seja
+        # espremido para fora da tela ao redimensionar a janela.
+        self.minsize(620, 760)
 
         self._fullscreen = False
         self.bind("<Escape>", lambda e: self._sair_fullscreen())
@@ -81,6 +105,8 @@ class AppCliente(ctk.CTk):
         self._card_refs: dict = {}       # {produto_id: {widgets do card}}
         self._card_positions: dict = {}  # {produto_id: (row, col)}
         self.current_step = 1      # 1=Sabor  2=Quantidade  3=Pagamento
+        self._colunas_atual = 3
+        self._resize_job = None
 
         self._fontes()
         self._build_header()
@@ -90,6 +116,64 @@ class AppCliente(ctk.CTk):
         self.after(400, self._mostrar_screensaver)
 
     # ── Janela / tela cheia ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _monitor_do_lancamento() -> tuple[int, int, int, int] | None:
+        """Retorna (left, top, right, bottom) do monitor onde o cursor do
+        mouse está no momento em que o app inicia — ou seja, a tela de onde
+        o executável foi aberto (duplo clique no atalho/ícone)."""
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class RECT(ctypes.Structure):
+                _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                             ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [("cbSize", ctypes.c_ulong),
+                             ("rcMonitor", RECT),
+                             ("rcWork", RECT),
+                             ("dwFlags", ctypes.c_ulong)]
+
+            user32 = ctypes.windll.user32
+            pt = wintypes.POINT()
+            user32.GetCursorPos(ctypes.byref(pt))
+            MONITOR_DEFAULTTONEAREST = 2
+            hmon = user32.MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST)
+            mi = MONITORINFO()
+            mi.cbSize = ctypes.sizeof(MONITORINFO)
+            user32.GetMonitorInfoW(hmon, ctypes.byref(mi))
+            r = mi.rcMonitor
+            return r.left, r.top, r.right, r.bottom
+        except Exception:
+            return None
+
+    @staticmethod
+    def _listar_monitores() -> list[tuple[int, int, int, int]]:
+        """Retorna (left, top, right, bottom) de cada monitor conectado,
+        ordenados da esquerda para a direita — mesma ordem usada pelo Windows
+        para numerar "Tela 1", "Tela 2" etc. nas Configurações de Vídeo."""
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            monitores = []
+
+            def _callback(hMonitor, hdcMonitor, lprcMonitor, dwData):
+                r = lprcMonitor.contents
+                monitores.append((r.left, r.top, r.right, r.bottom))
+                return 1
+
+            MonitorEnumProc = ctypes.WINFUNCTYPE(
+                ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong,
+                ctypes.POINTER(wintypes.RECT), ctypes.c_double)
+            ctypes.windll.user32.EnumDisplayMonitors(
+                0, 0, MonitorEnumProc(_callback), 0)
+            monitores.sort(key=lambda m: m[0])
+            return monitores
+        except Exception:
+            return []
 
     def _get_monitor_rect(self) -> tuple[int, int, int, int]:
         """Retorna (x, y, w, h) em pixels do monitor onde a janela está."""
@@ -226,8 +310,30 @@ class AppCliente(ctk.CTk):
         # 2. Grade de sabores — preenche o restante e rola verticalmente
         self.frm_grid = ctk.CTkScrollableFrame(corpo, fg_color=COR_FUNDO, corner_radius=0)
         self.frm_grid.pack(side="top", fill="both", expand=True, padx=10, pady=(12, 0))
-        for c in range(3):
+        for c in range(self._colunas_atual):
             self.frm_grid.grid_columnconfigure(c, weight=1)
+        # recalcula o número de colunas quando a largura disponível muda —
+        # evita cards gigantes/cortados quando a janela é maximizada ou
+        # redimensionada para um tamanho diferente do padrão.
+        self.frm_grid.bind("<Configure>", self._on_grid_configure)
+
+    def _on_grid_configure(self, event):
+        if self._resize_job is not None:
+            self.after_cancel(self._resize_job)
+        largura_disponivel = event.width
+        self._resize_job = self.after(150, lambda: self._recalcular_colunas(largura_disponivel))
+
+    def _recalcular_colunas(self, largura_disponivel: int):
+        self._resize_job = None
+        LARGURA_ALVO_CARD = 220
+        novo = max(1, largura_disponivel // LARGURA_ALVO_CARD)
+        if novo == self._colunas_atual:
+            return
+        self._colunas_atual = novo
+        for c in range(max(novo, 6)):
+            self.frm_grid.grid_columnconfigure(c, weight=1 if c < novo else 0)
+        if self.produtos:
+            self._renderizar_produtos()
 
     def _build_painel_pedido(self, parent):
         sombra = ctk.CTkFrame(parent, fg_color="#D9DEE6", corner_radius=24)
@@ -346,7 +452,7 @@ class AppCliente(ctk.CTk):
     def _renderizar_produtos(self):
         for w in self.frm_grid.winfo_children():
             w.destroy()
-        colunas = 3
+        colunas = self._colunas_atual
         # produtos com estoque > 0 primeiro; esgotados ao final
         ordenados = sorted(self.produtos, key=lambda p: 0 if (p.get("estoque") or 0) > 0 else 1)
         self._card_refs.clear()
@@ -368,7 +474,7 @@ class AppCliente(ctk.CTk):
                              border_width=1, border_color=COR_BORDA_CARD)
         card.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
 
-        swatch = ctk.CTkFrame(card, fg_color=cor_swatch_base, corner_radius=14, height=84)
+        swatch = ctk.CTkFrame(card, fg_color=cor_swatch_base, corner_radius=14, height=FOTO_ALTURA + 4)
         swatch.pack(fill="x", padx=2, pady=(2, 0))
         swatch.pack_propagate(False)
 
@@ -405,16 +511,31 @@ class AppCliente(ctk.CTk):
                 try:
                     r = httpx.get(f"{API_BASE}/imagens/{fname}", timeout=5)
                     if r.status_code == 200:
-                        foto = Image.open(BytesIO(r.content)).resize((160, 84), Image.LANCZOS)
-                        img_normal = ctk.CTkImage(light_image=foto, size=(160, 84))
-                        img_esgotado = ctk.CTkImage(
-                            light_image=foto.convert("LA").convert("RGB"), size=(160, 84))
+                        foto_original = Image.open(BytesIO(r.content))
 
                         def _aplicar():
                             refs = self._card_refs.get(pid)
                             if refs and refs["lbl_letra"].winfo_exists():
+                                # redimensiona para a largura real do card no
+                                # momento em que a foto chega, para preencher
+                                # todo o espaço do swatch (a largura varia
+                                # conforme o número de colunas da grade).
+                                refs["swatch"].update_idletasks()
+                                largura = refs["swatch"].winfo_width()
+                                if largura <= 1:
+                                    largura = FOTO_LARGURA
+                                foto = foto_original.resize((largura, FOTO_ALTURA), Image.LANCZOS)
+                                img_normal = ctk.CTkImage(light_image=foto, size=(largura, FOTO_ALTURA))
+                                img_esgotado = ctk.CTkImage(
+                                    light_image=foto.convert("LA").convert("RGB"),
+                                    size=(largura, FOTO_ALTURA))
                                 refs["img_normal"] = img_normal
                                 refs["img_esgotado"] = img_esgotado
+                                # força a reconfiguração mesmo que o estado
+                                # "esgotado" não tenha mudado — sem isso o
+                                # cache de _aplicar_estado_card pula a
+                                # aplicação da foto recém-carregada.
+                                refs["_esgotado"] = None
                                 self._aplicar_estado_card(pid)
                         self.after(0, _aplicar)
                 except Exception:
@@ -457,7 +578,7 @@ class AppCliente(ctk.CTk):
         lbl_preco.configure(text_color=COR_ESGOTADO_FX if esgotado else COR_LARANJA)
 
         if refs["img_normal"] is not None:
-            lbl_letra.configure(image=refs["img_esgotado"] if esgotado else refs["img_normal"])
+            lbl_letra.configure(image=refs["img_esgotado"] if esgotado else refs["img_normal"], text="")
 
         if esgotado:
             lbl_fx.configure(text="ESGOTADO" if estoque == 0 else "MÁXIMO NO CARRINHO")
@@ -465,7 +586,7 @@ class AppCliente(ctk.CTk):
         else:
             faixa.place_forget()
 
-        for w in (card, swatch, corpo_card):
+        for w in (card, swatch, corpo_card, lbl_letra):
             w.unbind("<Button-1>")
             if not esgotado:
                 w.bind("<Button-1>", lambda e, p=prod: self._adicionar(p))
@@ -564,7 +685,7 @@ class AppCliente(ctk.CTk):
 
     def _modal_nome(self, on_confirmar):
         """Modal touchscreen para capturar o nome do cliente."""
-        CW, CH = 540, 530
+        CW, CH = 680, 630
 
         modal = tk.Toplevel(self)
         modal.transient(self)
@@ -594,46 +715,46 @@ class AppCliente(ctk.CTk):
         def _apagar():
             nome_var.set(nome_var.get()[:-1])
 
-        tk.Frame(modal, bg=COR_HEADER, height=10).pack(fill="x")
+        tk.Frame(modal, bg=COR_HEADER, height=12).pack(fill="x")
         tk.Label(modal, text="Confirme seu nome", fg=COR_HEADER, bg="#FFFFFF",
-                 font=("Segoe UI", 18, "bold")).pack(pady=(18, 2))
+                 font=("Segoe UI", 21, "bold")).pack(pady=(20, 3))
         tk.Label(modal, text="Toque nas letras ou use o teclado",
-                 fg=COR_TEXTO_LEVE, bg="#FFFFFF", font=("Segoe UI", 11)).pack()
+                 fg=COR_TEXTO_LEVE, bg="#FFFFFF", font=("Segoe UI", 12)).pack()
 
-        entry = tk.Entry(modal, textvariable=nome_var, font=("Segoe UI", 22),
+        entry = tk.Entry(modal, textvariable=nome_var, font=("Segoe UI", 25),
                          relief="solid", bd=2, fg=COR_TEXTO, width=18,
                          justify="center", insertbackground=COR_HEADER)
-        entry.pack(pady=(14, 10), padx=30, ipady=6)
+        entry.pack(pady=(17, 13), padx=34, ipady=8)
         entry.focus_set()
 
         frm_kb = tk.Frame(modal, bg="#FFFFFF")
-        frm_kb.pack(padx=18)
-        _BTN = dict(font=("Segoe UI", 13, "bold"), relief="raised",
+        frm_kb.pack(padx=12)
+        _BTN = dict(font=("Segoe UI", 15, "bold"), relief="raised",
                     bg="#EEF1F5", fg=COR_TEXTO, activebackground=COR_AMARELO,
                     bd=1, cursor="hand2")
         for row_txt in ("QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"):
             frm_r = tk.Frame(frm_kb, bg="#FFFFFF")
-            frm_r.pack(pady=2)
+            frm_r.pack(pady=3)
             for c in row_txt:
                 tk.Button(frm_r, text=c, width=3, height=1,
                           command=lambda ch=c: _letra(ch), **_BTN
                           ).pack(side="left", padx=2)
 
         frm_extra = tk.Frame(frm_kb, bg="#FFFFFF")
-        frm_extra.pack(pady=4)
-        tk.Button(frm_extra, text="ESPACO", width=14, height=1,
+        frm_extra.pack(pady=5)
+        tk.Button(frm_extra, text="ESPACO", width=16, height=1,
                   command=lambda: _letra(" "), **_BTN).pack(side="left", padx=3)
         tk.Button(frm_extra, text="<", width=4, height=1,
                   command=_apagar,
                   **{**_BTN, "activebackground": "#FFCCCC"}).pack(side="left", padx=3)
 
         frm_btns = tk.Frame(modal, bg="#FFFFFF")
-        frm_btns.pack(fill="x", padx=20, pady=(10, 18))
+        frm_btns.pack(fill="x", padx=22, pady=(14, 20))
         tk.Button(frm_btns, text="Pular", bg="#EEF1F5", fg=COR_TEXTO,
-                  font=("Segoe UI", 12), relief="flat", padx=20, pady=10,
-                  cursor="hand2", command=_pular).pack(side="left", expand=True, fill="x", padx=(0, 6))
+                  font=("Segoe UI", 14), relief="flat", padx=20, pady=13,
+                  cursor="hand2", command=_pular).pack(side="left", expand=True, fill="x", padx=(0, 7))
         tk.Button(frm_btns, text="Confirmar", bg=COR_VERDE, fg="white",
-                  font=("Segoe UI", 13, "bold"), relief="flat", padx=20, pady=10,
+                  font=("Segoe UI", 15, "bold"), relief="flat", padx=20, pady=13,
                   cursor="hand2", command=_ok).pack(side="left", expand=True, fill="x")
 
         modal.bind("<Return>", lambda e: _ok())

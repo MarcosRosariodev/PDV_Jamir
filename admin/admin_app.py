@@ -103,7 +103,7 @@ class AdminApp(ctk.CTk):
             ("dashboard",  "  📊  Dashboard"),
             ("pedidos",    "  📋  Pedidos"),
             ("produtos",   "  🍦  Produtos"),
-            ("categorias", "  🏷️  Categorias"),
+            ("categorias", "  🏷  Categorias"),
             ("relatorios", "  📈  Relatórios"),
             ("cortesias",  "  🎁  Cortesias"),
         ]
@@ -480,7 +480,9 @@ class AdminApp(ctk.CTk):
             if not sel:
                 messagebox.showwarning("Aviso", "Selecione um produto.")
                 return
-            pid = int(tree.item(sel[0])["values"][0])
+            vals = tree.item(sel[0])["values"]
+            pid = int(vals[0])
+            nome_produto = vals[1]
             self.update()
             path = filedialog.askopenfilename(
                 title="Selecionar nova foto",
@@ -488,6 +490,7 @@ class AdminApp(ctk.CTk):
             )
             if not path:
                 return
+
             def _upload():
                 try:
                     with open(path, "rb") as f:
@@ -499,7 +502,47 @@ class AdminApp(ctk.CTk):
                     self.after(0, lambda: messagebox.showinfo("OK", "Foto atualizada!"))
                 except Exception as e:
                     self.after(0, lambda: messagebox.showerror("Erro", str(e)))
-            threading.Thread(target=_upload, daemon=True).start()
+
+            # ── Preview antes de enviar ──
+            dlg = ctk.CTkToplevel(self)
+            dlg.title("Confirmar nova foto")
+            dlg.geometry("300x430")
+            dlg.resizable(False, False)
+            dlg.grab_set()
+            dlg.after(100, dlg.lift)
+
+            ctk.CTkLabel(dlg, text=f"Foto para: {nome_produto}",
+                         font=ctk.CTkFont(size=13, weight="bold")).pack(pady=(18, 8))
+
+            preview_frm = ctk.CTkFrame(dlg, width=220, height=220, corner_radius=8,
+                                       fg_color=("gray85", "gray25"))
+            preview_frm.pack(pady=4)
+            preview_frm.pack_propagate(False)
+            preview_lbl = ctk.CTkLabel(preview_frm, text="")
+            preview_lbl.place(relx=0.5, rely=0.5, anchor="center")
+            try:
+                pil = Image.open(path).resize((220, 220), Image.LANCZOS)
+                ctk_img = ctk.CTkImage(light_image=pil, dark_image=pil, size=(220, 220))
+                preview_lbl.configure(image=ctk_img)
+                preview_lbl._ctk_image = ctk_img  # evita garbage collect
+            except Exception:
+                preview_lbl.configure(text="Não foi possível\nabrir a imagem", text_color="gray55")
+
+            ctk.CTkLabel(dlg, text=os.path.basename(path), text_color="gray55",
+                         font=ctk.CTkFont(size=11)).pack(pady=(8, 0))
+
+            frm_btns = ctk.CTkFrame(dlg, fg_color="transparent")
+            frm_btns.pack(fill="x", padx=20, pady=20, side="bottom")
+
+            def _confirmar():
+                dlg.destroy()
+                threading.Thread(target=_upload, daemon=True).start()
+
+            ctk.CTkButton(frm_btns, text="Cancelar", fg_color="gray40", hover_color="gray30",
+                          command=dlg.destroy).pack(side="left", expand=True, fill="x", padx=(0, 6))
+            ctk.CTkButton(frm_btns, text="Confirmar e Enviar", fg_color="#2E7D32",
+                          hover_color="#1B5E20", command=_confirmar,
+                          ).pack(side="left", expand=True, fill="x")
 
         ctk.CTkButton(frm_edit, text="Salvar Preço", width=110, height=32,
                       corner_radius=8, command=salvar_preco,

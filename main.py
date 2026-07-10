@@ -10,6 +10,19 @@ import threading
 import logging
 import traceback
 
+# DPI awareness precisa ser definida antes de qualquer janela ser criada —
+# sem isso o Windows escala (borra/redimensiona) a janela inteira em telas
+# com escala != 100%, fazendo grade e painéis não baterem com o tamanho real.
+if sys.platform == "win32":
+    import ctypes
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)  # PROCESS_SYSTEM_DPI_AWARE
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 

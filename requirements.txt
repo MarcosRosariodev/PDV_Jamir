@@ -8,5 +8,7 @@ pyusb==1.2.1
 httpx==0.27.2
 pydantic==2.10.2
 pydantic-settings==2.6.1
+python-multipart==0.0.32
+pywin32==312
 customtkinter==6.0.0
 pyinstaller==6.21.0

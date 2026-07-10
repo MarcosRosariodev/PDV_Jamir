@@ -26,8 +26,9 @@ a = Analysis(
         "uvicorn.protocols.websockets", "uvicorn.protocols.websockets.auto",
         "uvicorn.lifespan", "uvicorn.lifespan.on",
         # fastapi / starlette
-        "fastapi", "fastapi.middleware.cors",
+        "fastapi", "fastapi.middleware.cors", "fastapi.staticfiles",
         "starlette", "starlette.middleware", "starlette.middleware.cors",
+        "starlette.staticfiles",
         "anyio", "anyio._backends._asyncio",
         # banco
         "sqlalchemy", "sqlalchemy.dialects.sqlite",
@@ -55,7 +56,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
-    icon="assets/Logojamir.png",
+    icon="assets/Logojamir.ico",
 )
 
 coll = COLLECT(
