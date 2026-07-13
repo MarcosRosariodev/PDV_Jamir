@@ -692,7 +692,7 @@ class AdminApp(ctk.CTk):
 
         dlg = ctk.CTkToplevel(self)
         dlg.title("Novo Produto")
-        dlg.geometry("560x460")
+        dlg.geometry("560x500")
         dlg.resizable(False, False)
         dlg.grab_set()
         dlg.after(100, dlg.lift)
@@ -702,7 +702,7 @@ class AdminApp(ctk.CTk):
         campos = [
             ("Nome *",          ctk.StringVar()),
             ("Descrição",       ctk.StringVar()),
-            ("Preço *",         ctk.StringVar()),
+            ("Preço",           ctk.StringVar()),
             ("Estoque inicial", ctk.StringVar(value="50")),
         ]
         for i, (lbl, var) in enumerate(campos):
@@ -723,7 +723,7 @@ class AdminApp(ctk.CTk):
         sep = ctk.CTkFrame(dlg, height=2, fg_color=("gray80", "gray28"))
         sep.grid(row=5, column=0, columnspan=2, padx=20, pady=(12, 4), sticky="ew")
 
-        ctk.CTkLabel(dlg, text="Foto do produto:", font=ctk.CTkFont(size=12, weight="bold"),
+        ctk.CTkLabel(dlg, text="Foto do produto: *", font=ctk.CTkFont(size=12, weight="bold"),
                      ).grid(row=6, column=0, columnspan=2, padx=20, pady=(4, 8), sticky="w")
 
         frm_foto = ctk.CTkFrame(dlg, corner_radius=8)
@@ -763,10 +763,13 @@ class AdminApp(ctk.CTk):
             except Exception:
                 pass
 
-        ctk.CTkButton(frm_foto, text="📷  Escolher Foto", width=150, height=34,
+        frm_botoes = ctk.CTkFrame(frm_foto, fg_color="transparent")
+        frm_botoes.grid(row=0, column=1, padx=8, pady=(40, 12), sticky="w")
+
+        ctk.CTkButton(frm_botoes, text="📷  Escolher Foto", width=150, height=34,
                       corner_radius=8, fg_color="gray40", hover_color="gray30",
                       command=escolher_foto,
-                      ).grid(row=0, column=1, padx=8, pady=(40, 12), sticky="w")
+                      ).pack(side="left")
 
         # ── Salvar ──
         def salvar():
@@ -774,19 +777,30 @@ class AdminApp(ctk.CTk):
             desc      = campos[1][1].get().strip()
             preco_s   = campos[2][1].get().strip()
             estoque_s = campos[3][1].get().strip()
-            if not nome or not preco_s:
-                messagebox.showwarning("Aviso", "Nome e preço são obrigatórios.", parent=dlg)
+            img_path  = var_img_path["path"]
+
+            if not nome:
+                messagebox.showwarning("Aviso", "Nome do produto é obrigatório.", parent=dlg)
                 return
-            try:
-                preco = float(preco_s.replace(",", "."))
-            except ValueError:
-                messagebox.showerror("Erro", "Preço inválido.", parent=dlg)
+            if not img_path or not os.path.exists(img_path):
+                messagebox.showwarning("Aviso", "Foto do produto é obrigatória.", parent=dlg)
                 return
-            try:
-                estoque = int(estoque_s) if estoque_s else 0
-            except ValueError:
-                messagebox.showerror("Erro", "Estoque deve ser número inteiro.", parent=dlg)
-                return
+
+            preco = 0.0
+            if preco_s:
+                try:
+                    preco = float(preco_s.replace(",", "."))
+                except ValueError:
+                    messagebox.showerror("Erro", "Preço inválido.", parent=dlg)
+                    return
+
+            estoque = 0
+            if estoque_s:
+                try:
+                    estoque = int(estoque_s)
+                except ValueError:
+                    messagebox.showerror("Erro", "Estoque deve ser número inteiro.", parent=dlg)
+                    return
 
             payload = {
                 "nome": nome, "descricao": desc, "preco": preco,
@@ -796,17 +810,21 @@ class AdminApp(ctk.CTk):
 
             def _post():
                 try:
+                    existentes = api_get("/produtos/admin")
+                    if any(p["nome"].strip().lower() == nome.lower() for p in existentes):
+                        self.after(0, lambda: messagebox.showwarning(
+                            "Aviso", f"Já existe um produto com o nome '{nome}'.", parent=dlg))
+                        return
+
                     result = api_post("/produtos", payload)
                     produto_id = result["id"]
 
-                    img_path = var_img_path["path"]
-                    if img_path and os.path.exists(img_path):
-                        with open(img_path, "rb") as f:
-                            httpx.post(
-                                f"{API_BASE}/produtos/{produto_id}/imagem",
-                                files={"file": (os.path.basename(img_path), f)},
-                                timeout=15,
-                            )
+                    with open(img_path, "rb") as f:
+                        httpx.post(
+                            f"{API_BASE}/produtos/{produto_id}/imagem",
+                            files={"file": (os.path.basename(img_path), f)},
+                            timeout=15,
+                        )
 
                     self.after(0, dlg.destroy)
                     self.after(0, self._view_produtos)
@@ -815,9 +833,9 @@ class AdminApp(ctk.CTk):
 
             threading.Thread(target=_post, daemon=True).start()
 
-        ctk.CTkButton(dlg, text="Salvar Produto", height=40, corner_radius=8,
+        ctk.CTkButton(frm_botoes, text="Salvar Produto", width=130, height=34, corner_radius=8,
                       command=salvar,
-                      ).grid(row=8, column=0, columnspan=2, padx=20, pady=16, sticky="e")
+                      ).pack(side="left", padx=(12, 0))
 
     # ── Categorias ───────────────────────────────────────────────────────────
 
