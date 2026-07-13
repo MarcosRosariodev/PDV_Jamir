@@ -150,6 +150,20 @@ def atualizar_produto(produto_id: int, dados: ProdutoUpdate, db: Session = Depen
     return {"mensagem": "Produto atualizado"}
 
 
+@router.delete("/produtos/{produto_id}")
+def deletar_produto(produto_id: int, db: Session = Depends(get_db)):
+    p = db.query(Produto).filter(Produto.id == produto_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+    if db.query(PedidoItem).filter(PedidoItem.produto_id == produto_id).count() > 0:
+        raise HTTPException(status_code=400, detail="Produto possui pedidos vinculados e não pode ser excluído")
+    if db.query(Cortesia).filter(Cortesia.produto_id == produto_id).count() > 0:
+        raise HTTPException(status_code=400, detail="Produto possui cortesias vinculadas e não pode ser excluído")
+    db.delete(p)
+    db.commit()
+    return {"mensagem": "Produto removido"}
+
+
 def _produto_dict(p: Produto, admin: bool = False) -> dict:
     d = {
         "id": p.id,
@@ -324,6 +338,16 @@ def listar_cortesias(db: Session = Depends(get_db)):
         }
         for c in cortesias
     ]
+
+
+@router.delete("/cortesias/{cortesia_id}")
+def deletar_cortesia(cortesia_id: int, db: Session = Depends(get_db)):
+    c = db.query(Cortesia).filter(Cortesia.id == cortesia_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Cortesia não encontrada")
+    db.delete(c)
+    db.commit()
+    return {"mensagem": "Cortesia removida"}
 
 
 # ── Relatórios ────────────────────────────────────────────────────────────────

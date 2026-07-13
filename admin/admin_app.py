@@ -408,6 +408,10 @@ class AdminApp(ctk.CTk):
         ctk.CTkButton(frm_top, text="🎁 Registrar Cortesia", width=180, height=36,
                       corner_radius=8, fg_color="#6A1B9A", hover_color="#4A148C",
                       command=lambda: self._dlg_cortesia(tree),
+                      ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(frm_top, text="🗑 Excluir Produto", width=160, height=36,
+                      corner_radius=8, fg_color="#C62828", hover_color="#B71C1C",
+                      command=lambda: excluir_produto(),
                       ).pack(side="left")
 
         cols_cfg = [
@@ -543,6 +547,29 @@ class AdminApp(ctk.CTk):
             ctk.CTkButton(frm_btns, text="Confirmar e Enviar", fg_color="#2E7D32",
                           hover_color="#1B5E20", command=_confirmar,
                           ).pack(side="left", expand=True, fill="x")
+
+        def excluir_produto():
+            sel = tree.selection()
+            if not sel:
+                messagebox.showwarning("Aviso", "Selecione um produto.")
+                return
+            vals = tree.item(sel[0])["values"]
+            pid = int(vals[0])
+            nome = vals[1]
+            if not messagebox.askyesno(
+                "Confirmar exclusão",
+                f"Tem certeza que deseja excluir o produto '{nome}'?\n\n"
+                "Esta ação é permanente e não pode ser desfeita.",
+                icon="warning",
+            ):
+                return
+            def _del():
+                try:
+                    api_delete(f"/produtos/{pid}")
+                    self.after(0, self._view_produtos)
+                except Exception as e:
+                    self.after(0, lambda: messagebox.showerror("Erro", str(e)))
+            threading.Thread(target=_del, daemon=True).start()
 
         ctk.CTkButton(frm_edit, text="Salvar Preço", width=110, height=32,
                       corner_radius=8, command=salvar_preco,
@@ -1151,6 +1178,10 @@ class AdminApp(ctk.CTk):
         ctk.CTkButton(frm_top, text="↻ Atualizar", width=110, height=36,
                       corner_radius=8, fg_color="gray40", hover_color="gray30",
                       command=self._view_cortesias,
+                      ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(frm_top, text="🗑 Excluir", width=110, height=36,
+                      corner_radius=8, fg_color="#C62828", hover_color="#B71C1C",
+                      command=lambda: excluir_cortesia(),
                       ).pack(side="left")
 
         cols_cfg = [
@@ -1162,6 +1193,29 @@ class AdminApp(ctk.CTk):
         ]
         frm_tree, tree = self._tree_frame(cols_cfg)
         frm_tree.grid(row=2, column=0, padx=24, pady=4, sticky="nsew")
+
+        def excluir_cortesia():
+            sel = tree.selection()
+            if not sel:
+                messagebox.showwarning("Aviso", "Selecione uma cortesia.")
+                return
+            vals = tree.item(sel[0])["values"]
+            cid = int(vals[0])
+            produto = vals[2]
+            if not messagebox.askyesno(
+                "Confirmar exclusão",
+                f"Tem certeza que deseja excluir a cortesia registrada de '{produto}'?\n\n"
+                "Esta ação é permanente e não pode ser desfeita.",
+                icon="warning",
+            ):
+                return
+            def _del():
+                try:
+                    api_delete(f"/cortesias/{cid}")
+                    self.after(0, self._view_cortesias)
+                except Exception as e:
+                    self.after(0, lambda: messagebox.showerror("Erro", str(e)))
+            threading.Thread(target=_del, daemon=True).start()
 
         def preencher(lista: list):
             tree.delete(*tree.get_children())
